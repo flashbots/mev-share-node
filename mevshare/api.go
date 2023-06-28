@@ -95,8 +95,10 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 	m.knownBundleCache.Add(hash, struct{}{})
 
 	signerAddress := jsonrpcserver.GetSigner(ctx)
+	origin := jsonrpcserver.GetOrigin(ctx)
 	bundle.Metadata.Signer = signerAddress
 	bundle.Metadata.ReceivedAt = hexutil.Uint64(uint64(time.Now().UnixMicro()))
+	bundle.Metadata.OriginID = origin
 
 	if hasUnmatchedHash {
 		var unmatchedHash common.Hash

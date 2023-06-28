@@ -13,9 +13,6 @@ var (
 	ErrBundleTooDeep            = errors.New("bundle too deep")
 	ErrInvalidBundleConstraints = errors.New("invalid bundle constraints")
 	ErrInvalidBundlePrivacy     = errors.New("invalid bundle privacy")
-	ErrInvalidBundleMetadata    = errors.New("invalid bundle metadata")
-
-	maxOriginIDLength = 255
 )
 
 func cleanBody(bundle *SendMevBundleArgs) {
@@ -208,9 +205,7 @@ func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint
 	bundle.Metadata.BundleHash = hash
 	bundle.Metadata.BodyHashes = bodyHashes
 	bundle.Metadata.Signer = common.Address{}
-	if len(bundle.Metadata.OriginID) > maxOriginIDLength {
-		return hash, txs, unmatched, ErrInvalidBundleMetadata
-	}
+	bundle.Metadata.OriginID = ""
 	bundle.Metadata.ReceivedAt = 0
 
 	return hash, txs, unmatched, nil

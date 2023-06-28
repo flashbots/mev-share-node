@@ -24,9 +24,14 @@ var (
 	CodeCustomError    = -32000
 )
 
+const (
+	maxOriginIDLength = 255
+)
+
 type (
 	highPriorityKey struct{}
 	signerKey       struct{}
+	originKey       struct{}
 )
 
 type JSONRPCRequest struct {
@@ -122,6 +127,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ctx = context.WithValue(ctx, signerKey{}, signer)
 	}
 
+	origin := r.Header.Get("x-flashbots-origin")
+	if origin != "" {
+		if len(origin) > maxOriginIDLength {
+			writeJSONRPCError(w, req.ID, CodeInvalidRequest, "x-flashbots-origin header is too long")
+			return
+		}
+		ctx = context.WithValue(ctx, originKey{}, origin)
+	}
+
 	// get method
 	method, ok := h.methods[req.Method]
 	if !ok {
@@ -168,6 +182,14 @@ func GetSigner(ctx context.Context) common.Address {
 	value, ok := ctx.Value(signerKey{}).(common.Address)
 	if !ok {
 		return common.Address{}
+	}
+	return value
+}
+
+func GetOrigin(ctx context.Context) string {
+	value, ok := ctx.Value(originKey{}).(string)
+	if !ok {
+		return ""
 	}
 	return value
 }
