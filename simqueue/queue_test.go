@@ -3,6 +3,7 @@ package simqueue
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,187 +13,174 @@ import (
 	"golang.org/x/time/rate"
 )
 
-func TestRedisQueue(t *testing.T) {
-	ctx := context.Background()
+var processTimeout = 10 * time.Millisecond
+
+type queueRunner struct {
+	queue  *RedisQueue
+	wg     *sync.WaitGroup
+	cancel context.CancelFunc
+}
+
+func newQueueRunner(queueName string) queueRunner {
 	log, err := zap.NewDevelopment()
-	require.NoError(t, err)
+	if err != nil {
+		panic(err)
+	}
 	red := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
+	queue := NewRedisQueue(log, red, queueName)
+	err = queue.CleanQueues(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	return queueRunner{
+		queue:  queue,
+		cancel: nil,
+		wg:     nil,
+	}
+}
 
-	processed := make(chan []byte, 10)
-	nextProcessed := func() []byte {
-		select {
-		case data := <-processed:
-			return data
-		case <-time.After(1 * time.Second):
-			t.Fatal("timeout")
-		}
+func (q *queueRunner) startProcessLoop(ctx context.Context, processFuncs []ProcessFunc) {
+	procCtx, procCancel := context.WithCancel(ctx)
+	q.cancel = procCancel
+	q.wg = q.queue.StartProcessLoop(procCtx, processFuncs)
+}
+
+func (q *queueRunner) stopProcessLoop() {
+	if q.cancel != nil {
+		q.cancel()
+	}
+	if q.wg != nil {
+		q.wg.Wait()
+	}
+	err := q.queue.CleanQueues(context.Background())
+	if err != nil {
+		panic(err)
+	}
+}
+
+type testWorker struct {
+	processed chan []byte
+}
+
+func newTestWorker() *testWorker {
+	return &testWorker{
+		processed: make(chan []byte, 10),
+	}
+}
+
+func (w *testWorker) processOk(ctx context.Context, data []byte) error {
+	w.processed <- data
+	return nil
+}
+
+func (w *testWorker) nextProcessed(timeout time.Duration) []byte {
+	select {
+	case data := <-w.processed:
+		return data
+	case <-time.After(timeout):
 		return nil
 	}
-	processOk := func(ctx context.Context, data []byte) error {
-		processed <- data
-		return nil
-	}
-	queue := NewRedisQueue(log, red, "queue_test")
-	err = queue.CleanQueues(ctx)
-	require.NoError(t, err)
+}
+
+// TestRedisQueue tests that the redis queue works as expected
+// it's implemented in one method to test possible interactions between different tests
+func TestRedisQueue(t *testing.T) {
+	ctx := context.Background()
+	r := newQueueRunner("test_queue")
+	worker := newTestWorker()
 
 	// test that queue can be cancelled
 	t.Run("empty queue cancel", func(t *testing.T) {
-		procCtx, procCancel := context.WithCancel(ctx)
-		wg := queue.StartProcessLoop(procCtx, []ProcessFunc{processOk})
+		r.startProcessLoop(ctx, []ProcessFunc{worker.processOk})
 
 		// wait so code gets to the blocking pop opearation
 		time.Sleep(10 * time.Millisecond)
 
-		procCancel()
-		wg.Wait()
-		err = queue.CleanQueues(context.Background())
-		require.NoError(t, err)
+		r.stopProcessLoop()
 	})
 
 	// test that normal processing works
 	t.Run("normal processing", func(t *testing.T) {
-		procCtx, procCancel := context.WithCancel(ctx)
-		wg := queue.StartProcessLoop(procCtx, []ProcessFunc{processOk})
+		r.startProcessLoop(ctx, []ProcessFunc{worker.processOk})
 
-		err = queue.UpdateBlock(1)
+		err := r.queue.UpdateBlock(1)
 		require.NoError(t, err)
 
-		err = queue.Push(ctx, []byte("test"), false, 2, 2)
+		err = r.queue.Push(context.Background(), []byte("test"), false, 2, 2)
 		require.NoError(t, err)
 
-		require.Equal(t, "test", string(nextProcessed()))
-		procCancel()
-		wg.Wait()
-		err = queue.CleanQueues(context.Background())
-		require.NoError(t, err)
+		require.Equal(t, "test", string(worker.nextProcessed(processTimeout)))
+
+		require.Nil(t, worker.nextProcessed(processTimeout))
+
+		r.stopProcessLoop()
 	})
 
 	// test multiple workers
 	t.Run("multiple workers", func(t *testing.T) {
-		procCtx, procCancel := context.WithCancel(ctx)
-		workers := MultipleWorkers(processOk, 10, rate.Inf, 1)
-		wg := queue.StartProcessLoop(procCtx, workers)
+		workers := MultipleWorkers(worker.processOk, 10, rate.Inf, 1)
+		r.startProcessLoop(ctx, workers)
 
-		err = queue.UpdateBlock(1)
+		err := r.queue.UpdateBlock(1)
 		require.NoError(t, err)
 
 		for i := 0; i < 10; i++ {
-			err = queue.Push(ctx, []byte("test-multiple"), false, 2, 2)
+			err = r.queue.Push(ctx, []byte("test-multiple"), false, 2, 2)
 			require.NoError(t, err)
 		}
 
 		for i := 0; i < 10; i++ {
-			require.Equal(t, "test-multiple", string(nextProcessed()))
+			require.Equal(t, "test-multiple", string(worker.nextProcessed(processTimeout)))
 		}
-		procCancel()
-		wg.Wait()
-		err = queue.CleanQueues(context.Background())
-		require.NoError(t, err)
+
+		require.Nil(t, worker.nextProcessed(processTimeout))
+		r.stopProcessLoop()
 	})
 
 	// test that stale items are not processed
 	t.Run("test queue cleanup", func(t *testing.T) {
-		err = queue.Push(ctx, []byte("test-stale"), false, 2, 2)
+		err := r.queue.Push(context.Background(), []byte("test-stale"), false, 2, 2)
 		require.NoError(t, err)
 
-		err = queue.UpdateBlock(2)
+		err = r.queue.UpdateBlock(2)
 		require.NoError(t, err)
 
-		procCtx, procCancel := context.WithCancel(ctx)
-		wg := queue.StartProcessLoop(procCtx, []ProcessFunc{processOk})
+		r.startProcessLoop(ctx, []ProcessFunc{worker.processOk})
+
+		err = r.queue.Push(ctx, []byte("test-new"), false, 3, 3)
 		require.NoError(t, err)
 
-		err = queue.Push(ctx, []byte("test-new"), false, 3, 3)
-		require.NoError(t, err)
+		require.Equal(t, "test-new", string(worker.nextProcessed(processTimeout)))
 
-		require.Equal(t, "test-new", string(nextProcessed()))
+		require.Nil(t, worker.nextProcessed(processTimeout))
 
-		procCancel()
-		wg.Wait()
-		err = queue.CleanQueues(context.Background())
-		require.NoError(t, err)
+		r.stopProcessLoop()
 	})
 
 	// test queue push semantics
 	t.Run("queue push", func(t *testing.T) {
-		queue.MaxUnprocessedItemsLowPrio = 3
-		queue.MaxUnprocessedItemsHighPrio = 4
-		defer func() {
-			queue.MaxUnprocessedItemsLowPrio = DefaultMaxUnprocessedItemsForLowPrio
-			queue.MaxUnprocessedItemsHighPrio = DefaultMaxUnprocessedItemsForHighPrio
-		}()
-
-		err = queue.UpdateBlock(3)
-		require.NoError(t, err)
-
-		queued, err := queue.queuedItems(ctx)
-		require.NoError(t, err)
-		require.Equal(t, uint64(0), queued)
-
-		// adding stale element fails
-		err = queue.Push(ctx, []byte("test-stale"), false, 2, 3)
-		require.ErrorIs(t, err, ErrStaleItem)
-
-		queued, err = queue.queuedItems(ctx)
-		require.NoError(t, err)
-		require.Equal(t, uint64(0), queued)
-
-		// add 3 items
-		err = queue.Push(ctx, []byte("test-full"), false, 3, 4)
-		require.NoError(t, err)
-		err = queue.Push(ctx, []byte("test-full"), false, 3, 5)
-		require.NoError(t, err)
-		err = queue.Push(ctx, []byte("test-full"), false, 5, 6)
-		require.NoError(t, err)
-
-		queued, err = queue.queuedItems(ctx)
-		require.NoError(t, err)
-		require.Equal(t, uint64(3), queued)
-
-		// adding 4th item fails
-		err = queue.Push(ctx, []byte("test-full"), false, 3, 7)
-		require.ErrorIs(t, err, ErrQueueFull)
-
-		// adding 4th high prio item ok
-		err = queue.Push(ctx, []byte("test-full"), true, 3, 7)
-		require.NoError(t, err)
-
-		// adding 5th high prio item fails
-		err = queue.Push(ctx, []byte("test-full"), true, 3, 7)
-		require.ErrorIs(t, err, ErrQueueFull)
-
-		queued, err = queue.queuedItems(ctx)
-		require.NoError(t, err)
-		require.Equal(t, uint64(4), queued)
-
-		err = queue.CleanQueues(context.Background())
-		require.NoError(t, err)
+		testQueuePush(t, r, worker)
 	})
 
 	// test rollover of the unprocessed items in the queue
 	t.Run("test rollover", func(t *testing.T) {
-		err = queue.Push(ctx, []byte("test-rollover"), false, 4, 5)
+		err := r.queue.Push(ctx, []byte("test-rollover"), false, 4, 5)
 		require.NoError(t, err)
 
-		err = queue.UpdateBlock(3)
+		err = r.queue.UpdateBlock(3)
 		require.NoError(t, err)
 
-		err = queue.UpdateBlock(4)
+		err = r.queue.UpdateBlock(4)
 		require.NoError(t, err)
 
-		procCtx, procCancel := context.WithCancel(ctx)
-		wg := queue.StartProcessLoop(procCtx, []ProcessFunc{processOk})
-		require.NoError(t, err)
+		r.startProcessLoop(ctx, []ProcessFunc{worker.processOk})
 
-		require.Equal(t, "test-rollover", string(nextProcessed()))
+		require.Equal(t, "test-rollover", string(worker.nextProcessed(processTimeout)))
 
-		procCancel()
-		wg.Wait()
-		err = queue.CleanQueues(context.Background())
-		require.NoError(t, err)
+		require.Nil(t, worker.nextProcessed(processTimeout))
+		r.stopProcessLoop()
 	})
 
 	// test processing when processor returns error
@@ -200,34 +188,235 @@ func TestRedisQueue(t *testing.T) {
 		errEncountered := false
 		processErr := func(ctx context.Context, data []byte) error {
 			errEncountered = true
-			return errors.New("processing error") //nolint:goerr113
+			return errors.Join(errors.New("processing error"), ErrProcessWorkerError) //nolint:goerr113
 		}
 
-		err = queue.UpdateBlock(5)
+		err := r.queue.UpdateBlock(5)
 		require.NoError(t, err)
 
-		procCtx, procCancel := context.WithCancel(ctx)
-		wg := queue.StartProcessLoop(procCtx, []ProcessFunc{processOk, processErr})
-		require.NoError(t, err)
+		r.startProcessLoop(ctx, []ProcessFunc{worker.processOk, processErr})
 
 		// push 4 items
 		for i := 0; i < 4; i++ {
-			err = queue.Push(ctx, []byte("test-error"), false, 6, 6)
+			err = r.queue.Push(ctx, []byte("test-error"), false, 6, 6)
 			require.NoError(t, err)
 		}
 
 		// receive 4 items from the queue (processed by the first processor that does not fail)
 		for i := 0; i < 4; i++ {
-			require.Equal(t, "test-error", string(nextProcessed()))
+			require.Equal(t, "test-error", string(worker.nextProcessed(processTimeout)))
 		}
 		// make sure the error was encountered (processed by the second processor that fails)
 		require.True(t, errEncountered)
 
-		procCancel()
-		wg.Wait()
-		err = queue.CleanQueues(context.Background())
-		require.NoError(t, err)
+		require.Nil(t, worker.nextProcessed(processTimeout))
+
+		r.stopProcessLoop()
 	})
+
+	// test processing when processor returns error too many times
+	t.Run("test processing with error, unrecoverable", func(t *testing.T) {
+		r.queue.MaxRetries = 2
+		defer func() {
+			r.queue.MaxRetries = DefaultMaxRetries
+		}()
+
+		processErr := func(ctx context.Context, data []byte) error {
+			return errors.Join(errors.New("processing error"), ErrProcessWorkerError) //nolint:goerr113
+		}
+
+		err := r.queue.UpdateBlock(6)
+		require.NoError(t, err)
+
+		r.startProcessLoop(ctx, []ProcessFunc{processErr})
+
+		err = r.queue.Push(ctx, []byte("test-error-forever"), false, 7, 7)
+		require.NoError(t, err)
+
+		require.Nil(t, worker.nextProcessed(processTimeout*5))
+
+		r.stopProcessLoop()
+	})
+
+	// test rescheduling of the unprocessed items in the queue for the next block
+	t.Run("test processing with rescheduling", func(t *testing.T) {
+		testQueueResched(t, r, worker)
+	})
+
+	// test rescheduling of the unprocessed items in the queue for the next block, but with too many retries
+	t.Run("test processing with rescheduling, unrecoverable", func(t *testing.T) {
+		testQueueReschedUnrecoverable(t, r, worker)
+	})
+}
+
+func testQueueReschedUnrecoverable(t *testing.T, r queueRunner, worker *testWorker) {
+	t.Helper()
+	ctx := context.Background()
+	r.queue.MaxRetries = 3
+	defer func() {
+		r.queue.MaxRetries = DefaultMaxRetries
+	}()
+
+	var (
+		callCount = 0
+		mu        sync.Mutex
+	)
+	processErr := func(ctx context.Context, data []byte) error {
+		mu.Lock()
+		defer mu.Unlock()
+		callCount++
+		return ErrProcessScheduleNextBlock
+	}
+
+	err := r.queue.Push(ctx, []byte("test-error-reschedule-unrecoverable"), false, 11, 20)
+	require.NoError(t, err)
+
+	r.startProcessLoop(ctx, []ProcessFunc{processErr})
+
+	err = r.queue.UpdateBlock(10)
+	require.NoError(t, err)
+	time.Sleep(processTimeout)
+	err = r.queue.UpdateBlock(11)
+	require.NoError(t, err)
+	time.Sleep(processTimeout)
+	err = r.queue.UpdateBlock(12)
+	require.NoError(t, err)
+	time.Sleep(processTimeout)
+	// after 3 failures it should give up
+	err = r.queue.UpdateBlock(13)
+	require.NoError(t, err)
+	time.Sleep(processTimeout)
+	err = r.queue.UpdateBlock(14)
+	require.NoError(t, err)
+	time.Sleep(processTimeout)
+
+	require.Nil(t, worker.nextProcessed(processTimeout))
+	// 3 failures
+	mu.Lock()
+	require.Equal(t, 3, callCount)
+	mu.Unlock()
+
+	r.stopProcessLoop()
+}
+
+func testQueueResched(t *testing.T, r queueRunner, worker *testWorker) {
+	t.Helper()
+	ctx := context.Background()
+	r.queue.MaxRetries = 3
+	defer func() {
+		r.queue.MaxRetries = DefaultMaxRetries
+	}()
+
+	var (
+		callCount        = 0
+		shouldReschedule = true
+		mu               sync.Mutex
+	)
+	processErr := func(ctx context.Context, data []byte) error {
+		mu.Lock()
+		defer mu.Unlock()
+		callCount++
+		if shouldReschedule {
+			return ErrProcessScheduleNextBlock
+		} else {
+			return worker.processOk(ctx, data)
+		}
+	}
+
+	err := r.queue.UpdateBlock(7)
+	require.NoError(t, err)
+
+	r.startProcessLoop(ctx, []ProcessFunc{processErr})
+
+	err = r.queue.Push(ctx, []byte("test-error-reschedule"), false, 8, 10)
+	require.NoError(t, err)
+
+	// it should fail for current block 7, but reschedule for block 8
+	require.Nil(t, worker.nextProcessed(processTimeout))
+	err = r.queue.UpdateBlock(8)
+	require.NoError(t, err)
+
+	// it should fail for current block 8, but reschedule for block 9, where it should succeed
+	time.Sleep(processTimeout)
+
+	mu.Lock()
+	shouldReschedule = false
+	mu.Unlock()
+
+	require.Nil(t, worker.nextProcessed(processTimeout))
+	err = r.queue.UpdateBlock(9)
+	require.NoError(t, err)
+
+	require.Equal(t, "test-error-reschedule", string(worker.nextProcessed(processTimeout)))
+
+	require.Nil(t, worker.nextProcessed(processTimeout))
+
+	// 2 failures + 1 success
+	mu.Lock()
+	require.Equal(t, 3, callCount)
+	mu.Unlock()
+
+	r.stopProcessLoop()
+}
+
+func testQueuePush(t *testing.T, r queueRunner, worker *testWorker) {
+	t.Helper()
+	ctx := context.Background()
+
+	r.queue.MaxUnprocessedItemsLowPrio = 3
+	r.queue.MaxUnprocessedItemsHighPrio = 4
+	defer func() {
+		r.queue.MaxUnprocessedItemsLowPrio = DefaultMaxUnprocessedItemsForLowPrio
+		r.queue.MaxUnprocessedItemsHighPrio = DefaultMaxUnprocessedItemsForHighPrio
+	}()
+
+	err := r.queue.UpdateBlock(3)
+	require.NoError(t, err)
+
+	queued, err := r.queue.queuedItems(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), queued)
+
+	// adding stale element fails
+	err = r.queue.Push(ctx, []byte("test-stale"), false, 2, 3)
+	require.ErrorIs(t, err, ErrStaleItem)
+
+	queued, err = r.queue.queuedItems(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), queued)
+
+	// add 3 items
+	err = r.queue.Push(ctx, []byte("test-full"), false, 3, 4)
+	require.NoError(t, err)
+	err = r.queue.Push(ctx, []byte("test-full"), false, 3, 5)
+	require.NoError(t, err)
+	err = r.queue.Push(ctx, []byte("test-full"), false, 5, 6)
+	require.NoError(t, err)
+
+	queued, err = r.queue.queuedItems(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), queued)
+
+	// adding 4th item fails
+	err = r.queue.Push(ctx, []byte("test-full"), false, 3, 7)
+	require.ErrorIs(t, err, ErrQueueFull)
+
+	// adding 4th high prio item ok
+	err = r.queue.Push(ctx, []byte("test-full"), true, 3, 7)
+	require.NoError(t, err)
+
+	// adding 5th high prio item fails
+	err = r.queue.Push(ctx, []byte("test-full"), true, 3, 7)
+	require.ErrorIs(t, err, ErrQueueFull)
+
+	queued, err = r.queue.queuedItems(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), queued)
+
+	require.Nil(t, worker.nextProcessed(processTimeout))
+
+	err = r.queue.CleanQueues(ctx)
+	require.NoError(t, err)
 }
 
 func BenchmarkQueue(b *testing.B) {

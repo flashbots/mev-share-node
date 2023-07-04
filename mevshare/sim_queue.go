@@ -3,6 +3,7 @@ package mevshare
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -113,14 +114,24 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte) error {
 	err := json.Unmarshal(data, &bundle)
 	if err != nil {
 		w.log.Error("Failed to unmarshal bundle simulation data", zap.Error(err))
-		// we don't want to retry after such error
-		return nil //nolint:nilerr
+		return err
 	}
 
 	result, err := w.simulationBackend.SimulateBundle(ctx, &bundle, nil)
 	if err != nil {
 		w.log.Error("Failed to simulate matched bundle", zap.Error(err))
-		return err
+		// we want to retry after such error
+		return errors.Join(err, simqueue.ErrProcessWorkerError)
+	}
+
+	// Try to re-simulate bundle if it failed
+	if !result.Success {
+		max := bundle.Inclusion.MaxBlock
+		state := result.StateBlock
+		// If state block is N, that means simulation for target block N+1 was tried
+		if max != 0 && state != 0 && max > state+1 {
+			return simqueue.ErrProcessScheduleNextBlock
+		}
 	}
 
 	w.backgroundWg.Add(1)
