@@ -70,7 +70,7 @@ func newTestWorker() *testWorker {
 	}
 }
 
-func (w *testWorker) processOk(ctx context.Context, data []byte) error {
+func (w *testWorker) processOk(ctx context.Context, data []byte, info QueueItemInfo) error {
 	w.processed <- data
 	return nil
 }
@@ -186,7 +186,7 @@ func TestRedisQueue(t *testing.T) {
 	// test processing when processor returns error
 	t.Run("test processing with error", func(t *testing.T) {
 		errEncountered := false
-		processErr := func(ctx context.Context, data []byte) error {
+		processErr := func(ctx context.Context, data []byte, info QueueItemInfo) error {
 			errEncountered = true
 			return errors.Join(errors.New("processing error"), ErrProcessWorkerError) //nolint:goerr113
 		}
@@ -221,7 +221,7 @@ func TestRedisQueue(t *testing.T) {
 			r.queue.MaxRetries = DefaultMaxRetries
 		}()
 
-		processErr := func(ctx context.Context, data []byte) error {
+		processErr := func(ctx context.Context, data []byte, info QueueItemInfo) error {
 			return errors.Join(errors.New("processing error"), ErrProcessWorkerError) //nolint:goerr113
 		}
 
@@ -261,7 +261,7 @@ func testQueueReschedUnrecoverable(t *testing.T, r queueRunner, worker *testWork
 		callCount = 0
 		mu        sync.Mutex
 	)
-	processErr := func(ctx context.Context, data []byte) error {
+	processErr := func(ctx context.Context, data []byte, info QueueItemInfo) error {
 		mu.Lock()
 		defer mu.Unlock()
 		callCount++
@@ -312,14 +312,14 @@ func testQueueResched(t *testing.T, r queueRunner, worker *testWorker) {
 		shouldReschedule = true
 		mu               sync.Mutex
 	)
-	processErr := func(ctx context.Context, data []byte) error {
+	processErr := func(ctx context.Context, data []byte, info QueueItemInfo) error {
 		mu.Lock()
 		defer mu.Unlock()
 		callCount++
 		if shouldReschedule {
 			return ErrProcessScheduleNextBlock
 		} else {
-			return worker.processOk(ctx, data)
+			return worker.processOk(ctx, data, info)
 		}
 	}
 
@@ -426,7 +426,7 @@ func BenchmarkQueue(b *testing.B) {
 		Addr: "localhost:6379",
 	})
 
-	processOk := func(ctx context.Context, data []byte) error {
+	processOk := func(ctx context.Context, data []byte, info QueueItemInfo) error {
 		return nil
 	}
 	queue := NewRedisQueue(log, red, "queue_test")

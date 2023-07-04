@@ -109,7 +109,7 @@ type SimulationWorker struct {
 	backgroundWg      *sync.WaitGroup
 }
 
-func (w *SimulationWorker) Process(ctx context.Context, data []byte) error {
+func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simqueue.QueueItemInfo) error {
 	var bundle SendMevBundleArgs
 	err := json.Unmarshal(data, &bundle)
 	if err != nil {
@@ -139,7 +139,7 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte) error {
 		defer w.backgroundWg.Done()
 		resCtx, cancel := context.WithTimeout(context.Background(), consumeSimulationTimeout)
 		defer cancel()
-		err = w.simRes.SimulatedBundle(resCtx, &bundle, result)
+		err = w.simRes.SimulatedBundle(resCtx, &bundle, result, info)
 		if err != nil {
 			w.log.Error("Failed to consume matched share bundle", zap.Error(err))
 		}

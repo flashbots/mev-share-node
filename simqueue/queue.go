@@ -97,7 +97,12 @@ var (
 	ErrProcessWorkerError = errors.New("worker error, retry processing on another worker")
 )
 
-type ProcessFunc func(ctx context.Context, data []byte) error
+type QueueItemInfo struct {
+	// Number of times this item was retried before the success.
+	Retries int
+}
+
+type ProcessFunc func(ctx context.Context, data []byte, info QueueItemInfo) error
 
 type Queue interface {
 	UpdateBlock(block uint64) error
@@ -259,6 +264,7 @@ func (s *RedisQueue) processNextItem(ctx context.Context, process ProcessFunc) e
 		if nextBlock > args.maxTargetBlock {
 			s.log.Debug("skipping stale item",
 				zap.Uint64("next_block", nextBlock),
+				zap.Uint16("iterations", args.iteration),
 				zap.Uint64("min_target_block", args.minTargetBlock),
 				zap.Uint64("max_target_block", args.maxTargetBlock))
 			return nil
@@ -277,7 +283,8 @@ func (s *RedisQueue) processNextItem(ctx context.Context, process ProcessFunc) e
 	// process item
 	workerCtx, workerCancel := context.WithTimeout(ctx, s.WorkerTimeout)
 	defer workerCancel()
-	err = process(workerCtx, args.data)
+	info := QueueItemInfo{Retries: int(args.iteration)}
+	err = process(workerCtx, args.data, info)
 
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrProcessWorkerError):
@@ -313,7 +320,7 @@ func (s *RedisQueue) StartProcessLoop(ctx context.Context, workers []ProcessFunc
 	var wg sync.WaitGroup
 	for _, process := range workers {
 		wg.Add(1)
-		go func(process func(ctx context.Context, data []byte) error) {
+		go func(process func(ctx context.Context, data []byte, info QueueItemInfo) error) {
 			defer wg.Done()
 
 			exp := backoff.NewExponentialBackOff()
