@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -125,7 +126,7 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 	}
 
 	// Try to re-simulate bundle if it failed
-	if !result.Success {
+	if !result.Success && isErrorRecoverable(result.Error) {
 		max := bundle.Inclusion.MaxBlock
 		state := result.StateBlock
 		// If state block is N, that means simulation for target block N+1 was tried
@@ -145,4 +146,8 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 		}
 	}()
 	return nil
+}
+
+func isErrorRecoverable(message string) bool {
+	return !strings.Contains(message, "nonce too low")
 }

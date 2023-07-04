@@ -3,8 +3,8 @@ package mevshare
 import (
 	"context"
 	"errors"
-	"github.com/flashbots/mev-share-node/simqueue"
 
+	"github.com/flashbots/mev-share-node/simqueue"
 	"go.uber.org/zap"
 )
 
@@ -47,7 +47,8 @@ func NewSimulationResultBackend(log *zap.Logger, hint HintBackend, builders []Bu
 // SimulatedBundle is called when simulation is done
 // NOTE: we return error only if we want to retry the simulation
 func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
-	bundle *SendMevBundleArgs, sim *SimMevBundleResponse, queueInfo simqueue.QueueItemInfo) error {
+	bundle *SendMevBundleArgs, sim *SimMevBundleResponse, queueInfo simqueue.QueueItemInfo,
+) error {
 	logger := s.log.With(zap.String("bundle", bundle.Metadata.BundleHash.Hex()))
 
 	logger.Info("Simulated bundle",
