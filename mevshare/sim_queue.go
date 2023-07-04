@@ -3,6 +3,8 @@ package mevshare
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -108,19 +110,29 @@ type SimulationWorker struct {
 	backgroundWg      *sync.WaitGroup
 }
 
-func (w *SimulationWorker) Process(ctx context.Context, data []byte) error {
+func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simqueue.QueueItemInfo) error {
 	var bundle SendMevBundleArgs
 	err := json.Unmarshal(data, &bundle)
 	if err != nil {
 		w.log.Error("Failed to unmarshal bundle simulation data", zap.Error(err))
-		// we don't want to retry after such error
-		return nil //nolint:nilerr
+		return err
 	}
 
 	result, err := w.simulationBackend.SimulateBundle(ctx, &bundle, nil)
 	if err != nil {
 		w.log.Error("Failed to simulate matched bundle", zap.Error(err))
-		return err
+		// we want to retry after such error
+		return errors.Join(err, simqueue.ErrProcessWorkerError)
+	}
+
+	// Try to re-simulate bundle if it failed
+	if !result.Success && isErrorRecoverable(result.Error) {
+		max := bundle.Inclusion.MaxBlock
+		state := result.StateBlock
+		// If state block is N, that means simulation for target block N+1 was tried
+		if max != 0 && state != 0 && max > state+1 {
+			return simqueue.ErrProcessScheduleNextBlock
+		}
 	}
 
 	w.backgroundWg.Add(1)
@@ -128,10 +140,14 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte) error {
 		defer w.backgroundWg.Done()
 		resCtx, cancel := context.WithTimeout(context.Background(), consumeSimulationTimeout)
 		defer cancel()
-		err = w.simRes.SimulatedBundle(resCtx, &bundle, result)
+		err = w.simRes.SimulatedBundle(resCtx, &bundle, result, info)
 		if err != nil {
 			w.log.Error("Failed to consume matched share bundle", zap.Error(err))
 		}
 	}()
 	return nil
+}
+
+func isErrorRecoverable(message string) bool {
+	return !strings.Contains(message, "nonce too low")
 }

@@ -45,12 +45,14 @@
 //     + The worker calls the `ProcessFunc` function with the payload data.
 //
 //     The `ProcessFunc` function is responsible for processing the item.
-//     * It should return `nil` if the item was processed successfully or if the item processing should not be retried.
-//     Error should be returned ONLY if the item processing should be retried.
-//     * If the `ProcessFunc` function returns an error, the item is rescheduled but up to `maxRetries` times.
+//     * It should return `nil` if the item was processed successfully.
+//     If item should be retried on the next block, the `ErrProcessScheduleNextBlock` error should be returned.
+//     If item should be retried on the same block (worker is faulty), the `ErrProcessWorkerError` error should be returned.
+//     * If the `ProcessFunc` function returns `ErrProcess*` error, the item is rescheduled but up to `maxRetries` times.
 //     Rescheduling is needed so in case of a worker error (one of the nodes in the cluster is down)
 //     the item is added back to the queue and processed by (hopefully) another worker.
 //     maxRetries is needed to prevent infinite loop in case of a bug.
+//     Rescheduling for the next block is needed if bundle fails, but it is still possible that it will work on the next block.
 //     * There is an exponential backoff between retries for the worker so if the worker
 //     is constantly failing to process item it will get less and less work.
 //
@@ -75,16 +77,32 @@ var (
 	ErrBlockNumberIncorrect = errors.New("block number is invalid")
 	ErrStaleItem            = errors.New("item is stale")
 	ErrQueueFull            = errors.New("queue is full")
+	ErrMaxRetriesReached    = errors.New("max retries reached")
+	ErrNoNextBlock          = errors.New("failed to requeue item, no next block available")
+	ErrRequeueFailed        = errors.New("item requeue failed")
 )
 
 const (
-	DefaultMaxRetries                     = uint16(7)
+	DefaultMaxRetries                     = uint16(30)
 	DefaultMaxUnprocessedItemsForLowPrio  = uint64(1024)
 	DefaultMaxUnprocessedItemsForHighPrio = uint64(2048)
 	DefaultWorkerTimout                   = 4 * time.Second
 )
 
-type ProcessFunc func(ctx context.Context, data []byte) error
+// Errors returned by ProcessFunc.
+var (
+	// ErrProcessScheduleNextBlock is returned by ProcessFunc if item should be retried on the next block.
+	ErrProcessScheduleNextBlock = errors.New("try to schedule item for the next block")
+	// ErrProcessWorkerError is returned by ProcessFunc if item should be retried on the same block by a different worker.
+	ErrProcessWorkerError = errors.New("worker error, retry processing on another worker")
+)
+
+type QueueItemInfo struct {
+	// Number of times this item was retried before the success.
+	Retries int
+}
+
+type ProcessFunc func(ctx context.Context, data []byte, info QueueItemInfo) error
 
 type Queue interface {
 	UpdateBlock(block uint64) error
@@ -234,11 +252,8 @@ func (s *RedisQueue) processNextItem(ctx context.Context, process ProcessFunc) e
 
 	// too early to process, requeue
 	if nextBlock < args.minTargetBlock {
-		err = backoff.Retry(func() error {
-			return s.pushToQueue(ctx, args)
-		}, back)
+		err := s.retryItem(ctx, args, false, false, back)
 		if err != nil {
-			s.log.Error("failed to requeue item", zap.Error(err))
 			return err
 		}
 		return nil
@@ -249,6 +264,7 @@ func (s *RedisQueue) processNextItem(ctx context.Context, process ProcessFunc) e
 		if nextBlock > args.maxTargetBlock {
 			s.log.Debug("skipping stale item",
 				zap.Uint64("next_block", nextBlock),
+				zap.Uint16("iterations", args.iteration),
 				zap.Uint64("min_target_block", args.minTargetBlock),
 				zap.Uint64("max_target_block", args.maxTargetBlock))
 			return nil
@@ -257,11 +273,8 @@ func (s *RedisQueue) processNextItem(ctx context.Context, process ProcessFunc) e
 		// requeue for the next block
 		args.minTargetBlock = nextBlock
 
-		err = backoff.Retry(func() error {
-			return s.pushToQueue(ctx, args)
-		}, back)
+		err := s.retryItem(ctx, args, false, false, back)
 		if err != nil {
-			s.log.Error("failed to requeue item", zap.Error(err))
 			return err
 		}
 		return nil
@@ -270,21 +283,28 @@ func (s *RedisQueue) processNextItem(ctx context.Context, process ProcessFunc) e
 	// process item
 	workerCtx, workerCancel := context.WithTimeout(ctx, s.WorkerTimeout)
 	defer workerCancel()
-	err = process(workerCtx, args.data)
-	if err != nil {
-		s.log.Warn("failed to process queue item", zap.Error(err), zap.Uint16("iteration", args.iteration))
-		if args.iteration < s.MaxRetries {
-			args.iteration++
-			err := backoff.Retry(func() error {
-				return s.pushToQueue(ctx, args)
-			}, back)
-			if err != nil {
-				s.log.Error("failed to requeue item", zap.Error(err))
-				return err
-			}
-		} else {
-			s.log.Error("max retries reached, dropping item", zap.Error(err), zap.Uint16("iteration", args.iteration))
+	info := QueueItemInfo{Retries: int(args.iteration)}
+	err = process(workerCtx, args.data, info)
+
+	switch {
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrProcessWorkerError):
+		s.log.Warn("worker failed to process item, retrying", zap.Error(err), zap.Uint16("iteration", args.iteration))
+		err := s.retryItem(ctx, args, true, false, back)
+		if err != nil {
+			return err
 		}
+	case errors.Is(err, ErrProcessScheduleNextBlock):
+		s.log.Debug("worker iteration failed, scheduled for the next block",
+			zap.Error(err),
+			zap.Uint64("next_block", nextBlock),
+			zap.Uint64("min_target_block", args.minTargetBlock),
+			zap.Uint64("max_target_block", args.maxTargetBlock),
+		)
+		err := s.retryItem(ctx, args, true, true, back)
+		if err != nil {
+			return err
+		}
+	case err != nil:
 		return err
 	}
 	timeInQueue := time.Since(args.timestamp)
@@ -300,7 +320,7 @@ func (s *RedisQueue) StartProcessLoop(ctx context.Context, workers []ProcessFunc
 	var wg sync.WaitGroup
 	for _, process := range workers {
 		wg.Add(1)
-		go func(process func(ctx context.Context, data []byte) error) {
+		go func(process func(ctx context.Context, data []byte, info QueueItemInfo) error) {
 			defer wg.Done()
 
 			exp := backoff.NewExponentialBackOff()
@@ -324,6 +344,30 @@ func (s *RedisQueue) StartProcessLoop(ctx context.Context, workers []ProcessFunc
 		}(process)
 	}
 	return &wg
+}
+
+func (s *RedisQueue) retryItem(ctx context.Context, args packArgs, incrIteration, incrBlock bool, back backoff.BackOff) error {
+	if args.iteration >= s.MaxRetries {
+		return ErrMaxRetriesReached
+	}
+
+	if incrIteration {
+		args.iteration++
+	}
+	if incrBlock {
+		if args.minTargetBlock >= args.maxTargetBlock {
+			return ErrNoNextBlock
+		}
+		args.minTargetBlock++
+	}
+	err := backoff.Retry(func() error {
+		return s.pushToQueue(ctx, args)
+	}, back)
+	if err != nil {
+		s.log.Error("failed to requeue item", zap.Error(err))
+		return errors.Join(err, ErrRequeueFailed)
+	}
+	return nil
 }
 
 // CleanQueues cleans all data in redis associated with the given queue

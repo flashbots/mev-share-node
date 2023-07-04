@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 
+	"github.com/flashbots/mev-share-node/simqueue"
 	"go.uber.org/zap"
 )
 
 // SimulationResult is responsible for processing simulation results
 // NOTE: That error should be returned only if simulation should be retried, for example if redis is down or none of the builders responded
 type SimulationResult interface {
-	SimulatedBundle(ctx context.Context, args *SendMevBundleArgs, result *SimMevBundleResponse) error
+	SimulatedBundle(ctx context.Context, args *SendMevBundleArgs, result *SimMevBundleResponse, info simqueue.QueueItemInfo) error
 }
 
 type Storage interface {
@@ -45,7 +46,9 @@ func NewSimulationResultBackend(log *zap.Logger, hint HintBackend, builders []Bu
 
 // SimulatedBundle is called when simulation is done
 // NOTE: we return error only if we want to retry the simulation
-func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context, bundle *SendMevBundleArgs, sim *SimMevBundleResponse) error {
+func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
+	bundle *SendMevBundleArgs, sim *SimMevBundleResponse, queueInfo simqueue.QueueItemInfo,
+) error {
 	logger := s.log.With(zap.String("bundle", bundle.Metadata.BundleHash.Hex()))
 
 	logger.Info("Simulated bundle",
@@ -53,7 +56,9 @@ func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context, bundle *S
 		zap.String("gwei_eff_gas_price", formatUnits(sim.MevGasPrice.ToInt(), "gwei")),
 		zap.String("eth_profit", formatUnits(sim.Profit.ToInt(), "eth")),
 		zap.String("eth_refundable_value", formatUnits(sim.RefundableValue.ToInt(), "eth")),
-		zap.Uint64("gas_used", uint64(sim.GasUsed)))
+		zap.Uint64("gas_used", uint64(sim.GasUsed)),
+		zap.Int("retries", queueInfo.Retries),
+	)
 
 	// failed bundle does not go to the builder
 	err := s.store.InsertBundleForStats(ctx, bundle, sim)
