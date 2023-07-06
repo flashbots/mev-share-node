@@ -114,7 +114,9 @@ func ExtractHints(bundle *SendMevBundleArgs, simRes *SimMevBundleResponse, share
 	}
 
 	if want.HasHint(HintHash) {
-		hint.Hash = bundle.Metadata.BundleHash
+		if bundle.Metadata != nil {
+			hint.Hash = bundle.Metadata.BundleHash
+		}
 	} else {
 		return hint, ErrCannotExtractHints
 	}

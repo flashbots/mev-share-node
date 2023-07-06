@@ -39,9 +39,11 @@ func (b *ExternalBuilder) SendBundle(ctx context.Context, bundle *SendMevBundleA
 			return res.Error
 		}
 	case BuilderAPIMevShareBeta1:
-		// clean metadata
+		// clean metadata, privacy
 		args := *bundle
-		args.Metadata = MevBundleMetadata{}
+		// it should already be cleaned while matching, but just in case we do it again here
+		MergePrivacyBuilders(&args)
+		cleanBundle(&args)
 		res, err := b.Client.Call(ctx, "mev_sendBundle", []SendMevBundleArgs{args})
 		if err != nil {
 			return err
@@ -67,6 +69,12 @@ func NewExternalBuildersBackend(builders []ExternalBuilder) *ExternalBuildersBac
 	}
 }
 
+// ParseExternalBuilders parses a string of the form "name,url,api;name,url,api;..."
+// where
+// - name is a builder name (same as in the privacy.builders field)
+// - url is the url of the builder endpoint
+// - api is one of "refund-recipient", "v0.1"
+// For example: "builder-1,http://url1,refund-recipient;builder-2,http://url2,v0.1"
 func ParseExternalBuilders(str string) (*ExternalBuildersBackend, error) {
 	if str == "" {
 		return NewExternalBuildersBackend(nil), nil
@@ -83,7 +91,7 @@ func ParseExternalBuilders(str string) (*ExternalBuildersBackend, error) {
 		switch builderParts[2] {
 		case "refund-recipient":
 			api = BuilderAPIRefRecipient
-		case "beta-1.0":
+		case "v0.1":
 			api = BuilderAPIMevShareBeta1
 		default:
 			return nil, ErrInvalidExternalBuilder
@@ -121,4 +129,14 @@ func (b *ExternalBuildersBackend) SendBundle(ctx context.Context, logger *zap.Lo
 			}
 		}
 	}
+}
+
+func cleanBundle(bundle *SendMevBundleArgs) {
+	for _, el := range bundle.Body {
+		if el.Bundle != nil {
+			cleanBundle(el.Bundle)
+		}
+	}
+	bundle.Privacy = nil
+	bundle.Metadata = nil
 }

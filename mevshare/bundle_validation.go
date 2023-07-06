@@ -187,7 +187,7 @@ func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint
 	}
 
 	// validate privacy
-	if unmatched && bundle.Privacy != nil {
+	if unmatched && bundle.Privacy != nil && bundle.Privacy.Hints != HintNone {
 		return hash, txs, unmatched, ErrInvalidBundlePrivacy
 	}
 
@@ -200,13 +200,11 @@ func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint
 		}
 	}
 
-	// validate metadata
+	// clean metadata
 	// clean fields owned by the node
+	bundle.Metadata = &MevBundleMetadata{}
 	bundle.Metadata.BundleHash = hash
 	bundle.Metadata.BodyHashes = bodyHashes
-	bundle.Metadata.Signer = common.Address{}
-	bundle.Metadata.OriginID = ""
-	bundle.Metadata.ReceivedAt = 0
 
 	return hash, txs, unmatched, nil
 }
@@ -214,4 +212,18 @@ func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint
 func ValidateBundle(bundle *SendMevBundleArgs, currentBlock uint64, signer types.Signer) (hash common.Hash, unmatched bool, err error) {
 	hash, _, unmatched, err = validateBundleInner(0, bundle, currentBlock, signer)
 	return hash, unmatched, err
+}
+
+func mergePrivacyBuildersInner(bundle *SendMevBundleArgs, topLevel *MevBundlePrivacy) {
+	MergeBuilders(topLevel, bundle.Privacy)
+	for _, el := range bundle.Body {
+		if el.Bundle != nil {
+			mergePrivacyBuildersInner(el.Bundle, topLevel)
+		}
+	}
+}
+
+// MergePrivacyBuilders Sets privacy.builders to the intersection of all privacy.builders in the bundle
+func MergePrivacyBuilders(bundle *SendMevBundleArgs) {
+	mergePrivacyBuildersInner(bundle, bundle.Privacy)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/flashbots/mev-share-node/simqueue"
 	"go.uber.org/zap"
 )
@@ -49,7 +50,11 @@ func NewSimulationResultBackend(log *zap.Logger, hint HintBackend, builders []Bu
 func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
 	bundle *SendMevBundleArgs, sim *SimMevBundleResponse, queueInfo simqueue.QueueItemInfo,
 ) error {
-	logger := s.log.With(zap.String("bundle", bundle.Metadata.BundleHash.Hex()))
+	var hash common.Hash
+	if bundle.Metadata != nil {
+		hash = bundle.Metadata.BundleHash
+	}
+	logger := s.log.With(zap.String("bundle", hash.Hex()))
 
 	logger.Info("Simulated bundle",
 		zap.Bool("success", sim.Success), zap.String("err_reason", sim.Error),

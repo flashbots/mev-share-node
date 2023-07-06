@@ -21,6 +21,9 @@ func extractTxsForRefundRecipientBundle(depth int, bundle *SendMevBundleArgs) (t
 		if el.Tx != nil {
 			txs = append(txs, *el.Tx)
 			if el.CanRevert {
+				if bundle.Metadata == nil {
+					return txs, canRevert, ErrNilBundleMetadata
+				}
 				if len(bundle.Metadata.BodyHashes) > i {
 					canRevert = append(canRevert, bundle.Metadata.BodyHashes[i])
 				} else {
