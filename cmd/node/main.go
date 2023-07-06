@@ -41,9 +41,10 @@ var (
 	defaultPostgresDSN           = getEnvOrDefault("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
 	defaultEthEndpoint           = getEnvOrDefault("ETH_ENDPOINT", "http://127.0.0.1:8545")
 	defaultMevSimBundleRateLimit = getEnvOrDefault("MEV_SIM_BUNDLE_RATE_LIMIT", "5")
-	defaultExternalBuilders      = getEnvOrDefault("EXTERNAL_BUILDERS", "")
-	defaultShareGasUsed          = getEnvOrDefault("SHARE_GAS_USED", "0")
-	defaultShareMevGasPrice      = getEnvOrDefault("SHARE_MEV_GAS_PRICE", "1")
+	// See `ParseExternalBuilders` external_builders.go for more info
+	defaultExternalBuilders = getEnvOrDefault("EXTERNAL_BUILDERS", "")
+	defaultShareGasUsed     = getEnvOrDefault("SHARE_GAS_USED", "0")
+	defaultShareMevGasPrice = getEnvOrDefault("SHARE_MEV_GAS_PRICE", "1")
 
 	// Flags
 	debugPtr                 = flag.Bool("debug", defaultDebug, "print debug output")

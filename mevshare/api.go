@@ -96,6 +96,9 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 
 	signerAddress := jsonrpcserver.GetSigner(ctx)
 	origin := jsonrpcserver.GetOrigin(ctx)
+	if bundle.Metadata == nil {
+		bundle.Metadata = &MevBundleMetadata{}
+	}
 	bundle.Metadata.Signer = signerAddress
 	bundle.Metadata.ReceivedAt = hexutil.Uint64(uint64(time.Now().UnixMicro()))
 	bundle.Metadata.OriginID = origin
@@ -126,6 +129,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 			refundPercent = *unmatchedBundle.Privacy.WantRefund
 		}
 		bundle.Validity.Refund = []RefundConstraint{{0, refundPercent}}
+		MergePrivacyBuilders(&bundle)
 		err = MergeInclusionIntervals(&bundle.Inclusion, &unmatchedBundle.Inclusion)
 		if err != nil {
 			return SendMevBundleResponse{}, ErrBackrunInclusion

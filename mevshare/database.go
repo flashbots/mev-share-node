@@ -166,6 +166,9 @@ func (b *DBBackend) GetBundle(ctx context.Context, hash common.Hash) (*SendMevBu
 func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) error {
 	var dbBundle DBSbundle
 	var err error
+	if bundle.Metadata == nil {
+		return ErrNilBundleMetadata
+	}
 	dbBundle.Hash = bundle.Metadata.BundleHash.Bytes()
 	dbBundle.Signer = bundle.Metadata.Signer.Bytes()
 	dbBundle.AllowMatching = bundle.Privacy != nil && bundle.Privacy.Hints.HasHint(HintHash)
@@ -241,6 +244,9 @@ func (b *DBBackend) CancelBundleByHash(ctx context.Context, hash common.Hash, si
 func (b *DBBackend) InsertBundleForBuilder(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) error {
 	var dbBundle DBSbundleBuilder
 	var err error
+	if bundle.Metadata == nil {
+		return ErrNilBundleMetadata
+	}
 	dbBundle.Hash = bundle.Metadata.BundleHash.Bytes()
 	dbBundle.Block = int64(bundle.Inclusion.BlockNumber)
 	dbBundle.MaxBlock = int64(bundle.Inclusion.MaxBlock)

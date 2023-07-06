@@ -10,7 +10,10 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-var ErrInvalidHintIntent = errors.New("invalid hint intent")
+var (
+	ErrInvalidHintIntent = errors.New("invalid hint intent")
+	ErrNilBundleMetadata = errors.New("bundle metadata is nil")
+)
 
 // HintIntent is a set of hint intents
 // its marshalled as an array of strings
@@ -110,7 +113,7 @@ type SendMevBundleArgs struct {
 	Body      []MevBundleBody    `json:"body"`
 	Validity  MevBundleValidity  `json:"validity"`
 	Privacy   *MevBundlePrivacy  `json:"privacy,omitempty"`
-	Metadata  MevBundleMetadata  `json:"metadata"`
+	Metadata  *MevBundleMetadata `json:"metadata,omitempty"`
 }
 
 type MevBundleInclusion struct {
