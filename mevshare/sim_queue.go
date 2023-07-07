@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/flashbots/mev-share-node/simqueue"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -124,6 +125,21 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 		// we want to retry after such error
 		return errors.Join(err, simqueue.ErrProcessWorkerError)
 	}
+
+	var hash common.Hash
+	if bundle.Metadata != nil {
+		hash = bundle.Metadata.BundleHash
+	}
+	w.log.Info("Simulated bundle",
+		zap.String("bundle", hash.Hex()),
+		zap.Bool("success", result.Success), zap.String("err_reason", result.Error),
+		zap.String("gwei_eff_gas_price", formatUnits(result.MevGasPrice.ToInt(), "gwei")),
+		zap.String("eth_profit", formatUnits(result.Profit.ToInt(), "eth")),
+		zap.String("eth_refundable_value", formatUnits(result.RefundableValue.ToInt(), "eth")),
+		zap.Uint64("gas_used", uint64(result.GasUsed)),
+		zap.Uint64("state_block", uint64(result.StateBlock)),
+		zap.Int("retries", info.Retries),
+	)
 
 	// Try to re-simulate bundle if it failed
 	if !result.Success && isErrorRecoverable(result.Error) {

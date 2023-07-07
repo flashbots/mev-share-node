@@ -48,22 +48,13 @@ func NewSimulationResultBackend(log *zap.Logger, hint HintBackend, builders []Bu
 // SimulatedBundle is called when simulation is done
 // NOTE: we return error only if we want to retry the simulation
 func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
-	bundle *SendMevBundleArgs, sim *SimMevBundleResponse, queueInfo simqueue.QueueItemInfo,
+	bundle *SendMevBundleArgs, sim *SimMevBundleResponse, _ simqueue.QueueItemInfo,
 ) error {
 	var hash common.Hash
 	if bundle.Metadata != nil {
 		hash = bundle.Metadata.BundleHash
 	}
 	logger := s.log.With(zap.String("bundle", hash.Hex()))
-
-	logger.Info("Simulated bundle",
-		zap.Bool("success", sim.Success), zap.String("err_reason", sim.Error),
-		zap.String("gwei_eff_gas_price", formatUnits(sim.MevGasPrice.ToInt(), "gwei")),
-		zap.String("eth_profit", formatUnits(sim.Profit.ToInt(), "eth")),
-		zap.String("eth_refundable_value", formatUnits(sim.RefundableValue.ToInt(), "eth")),
-		zap.Uint64("gas_used", uint64(sim.GasUsed)),
-		zap.Int("retries", queueInfo.Retries),
-	)
 
 	// failed bundle does not go to the builder
 	err := s.store.InsertBundleForStats(ctx, bundle, sim)
