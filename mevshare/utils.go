@@ -2,6 +2,7 @@ package mevshare
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"sync"
 	"time"
@@ -16,6 +17,8 @@ var (
 
 	big1  = big.NewInt(1)
 	big10 = big.NewInt(10)
+
+	ErrInvalidRefundConfig = errors.New("invalid refund config")
 )
 
 func formatUnits(value *big.Int, unit string) string {
@@ -114,4 +117,55 @@ func RoundUpWithPrecision(number *big.Int, precisionDigits int) *big.Int {
 	result := div.Mul(div, power)
 
 	return result
+}
+
+// ConvertTotalRefundConfigToBundleV1Params converts total refund config used in v0.2 to params used in mev_sendBundle v0.1
+func ConvertTotalRefundConfigToBundleV1Params(totalRefundConfig []RefundConfig) (wantRefund int, refundConfig []RefundConfig, err error) {
+	if len(totalRefundConfig) == 0 {
+		return wantRefund, refundConfig, nil
+	}
+
+	totalRefund := 0
+	for _, r := range totalRefundConfig {
+		if r.Percent <= 0 || r.Percent >= 100 {
+			return wantRefund, refundConfig, ErrInvalidRefundConfig
+		}
+		totalRefund += r.Percent
+	}
+	if totalRefund <= 0 || totalRefund >= 100 {
+		return wantRefund, refundConfig, ErrInvalidRefundConfig
+	}
+
+	refundConfig = make([]RefundConfig, len(totalRefundConfig))
+	copy(refundConfig, totalRefundConfig)
+
+	// normalize refund config percentages
+	for i := range refundConfig {
+		refundConfig[i].Percent = (refundConfig[i].Percent * 100) / totalRefund
+	}
+
+	// should sum to 100
+	totalRefundConfDelta := 0
+	for _, r := range refundConfig {
+		totalRefundConfDelta += r.Percent
+	}
+	totalRefundConfDelta = 100 - totalRefundConfDelta
+
+	// try to remove delta
+	for i, r := range refundConfig {
+		if fixed := totalRefundConfDelta + r.Percent; fixed <= 100 && fixed >= 0 {
+			refundConfig[i].Percent = fixed
+			break
+		}
+	}
+	return totalRefund, refundConfig, nil
+}
+
+func ConvertBundleV1ParamsToTotalRefundConfig(wantRefund int, refundConfig []RefundConfig) (totalRefundConfig []RefundConfig) {
+	totalRefundConfig = make([]RefundConfig, len(refundConfig))
+	for i := range refundConfig {
+		totalRefundConfig[i].Address = refundConfig[i].Address
+		totalRefundConfig[i].Percent = (refundConfig[i].Percent * wantRefund) / 100
+	}
+	return totalRefundConfig
 }

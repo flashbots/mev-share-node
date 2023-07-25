@@ -6,13 +6,17 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/rpc"
 )
 
 var (
-	ErrInvalidHintIntent = errors.New("invalid hint intent")
-	ErrNilBundleMetadata = errors.New("bundle metadata is nil")
+	ErrInvalidHintIntent  = errors.New("invalid hint intent")
+	ErrNilBundleMetadata  = errors.New("bundle metadata is nil")
+	ErrInvalidUnionBundle = errors.New("invalid union bundle")
+)
+
+const (
+	VersionV1 = "v0.1"
+	VersionV2 = "v0.2"
 )
 
 // HintIntent is a set of hint intents
@@ -27,6 +31,7 @@ const (
 	HintHash
 	HintSpecialLogs
 	HintTxHash
+	HintsAll = HintContractAddress | HintFunctionSelector | HintLogs | HintCallData | HintHash | HintSpecialLogs | HintTxHash
 	HintNone = 0
 )
 
@@ -107,87 +112,6 @@ type TxHint struct {
 	CallData         *hexutil.Bytes  `json:"callData,omitempty"`
 }
 
-type SendMevBundleArgs struct {
-	Version   string             `json:"version"`
-	Inclusion MevBundleInclusion `json:"inclusion"`
-	Body      []MevBundleBody    `json:"body"`
-	Validity  MevBundleValidity  `json:"validity"`
-	Privacy   *MevBundlePrivacy  `json:"privacy,omitempty"`
-	Metadata  *MevBundleMetadata `json:"metadata,omitempty"`
-}
-
-type MevBundleInclusion struct {
-	BlockNumber hexutil.Uint64 `json:"block"`
-	MaxBlock    hexutil.Uint64 `json:"maxBlock"`
-}
-
-type MevBundleBody struct {
-	Hash      *common.Hash       `json:"hash,omitempty"`
-	Tx        *hexutil.Bytes     `json:"tx,omitempty"`
-	Bundle    *SendMevBundleArgs `json:"bundle,omitempty"`
-	CanRevert bool               `json:"canRevert,omitempty"`
-}
-
-type MevBundleValidity struct {
-	Refund       []RefundConstraint `json:"refund,omitempty"`
-	RefundConfig []RefundConfig     `json:"refundConfig,omitempty"`
-}
-
-type RefundConstraint struct {
-	BodyIdx int `json:"bodyIdx"`
-	Percent int `json:"percent"`
-}
-
-type RefundConfig struct {
-	Address common.Address `json:"address"`
-	Percent int            `json:"percent"`
-}
-
-type MevBundlePrivacy struct {
-	Hints      HintIntent `json:"hints,omitempty"`
-	Builders   []string   `json:"builders,omitempty"`
-	WantRefund *int       `json:"wantRefund,omitempty"`
-}
-
-type MevBundleMetadata struct {
-	BundleHash common.Hash    `json:"bundleHash,omitempty"`
-	BodyHashes []common.Hash  `json:"bodyHashes,omitempty"`
-	Signer     common.Address `json:"signer,omitempty"`
-	OriginID   string         `json:"originId,omitempty"`
-	ReceivedAt hexutil.Uint64 `json:"receivedAt,omitempty"`
-}
-
-type SendMevBundleResponse struct {
-	BundleHash common.Hash `json:"bundleHash"`
-}
-
-type SimMevBundleResponse struct {
-	Success         bool             `json:"success"`
-	Error           string           `json:"error,omitempty"`
-	StateBlock      hexutil.Uint64   `json:"stateBlock"`
-	MevGasPrice     hexutil.Big      `json:"mevGasPrice"`
-	Profit          hexutil.Big      `json:"profit"`
-	RefundableValue hexutil.Big      `json:"refundableValue"`
-	GasUsed         hexutil.Uint64   `json:"gasUsed"`
-	BodyLogs        []SimMevBodyLogs `json:"logs,omitempty"`
-}
-
-type SimMevBundleAuxArgs struct {
-	ParentBlock *rpc.BlockNumberOrHash `json:"parentBlock"`
-	// override the default values for the block header
-	BlockNumber *hexutil.Big    `json:"blockNumber"`
-	Coinbase    *common.Address `json:"coinbase"`
-	Timestamp   *hexutil.Uint64 `json:"timestamp"`
-	GasLimit    *hexutil.Uint64 `json:"gasLimit"`
-	BaseFee     *hexutil.Big    `json:"baseFee"`
-	Timeout     *int64          `json:"timeout"`
-}
-
-type SimMevBodyLogs struct {
-	TxLogs     []*types.Log     `json:"txLogs,omitempty"`
-	BundleLogs []SimMevBodyLogs `json:"bundleLogs,omitempty"`
-}
-
 type CleanLog struct {
 	// address of the contract that generated the event
 	Address common.Address `json:"address"`
@@ -203,4 +127,47 @@ type SendRefundRecBundleArgs struct {
 	RevertingTxHashes []common.Hash   `json:"revertingTxHashes,omitempty"`
 	RefundPercent     *int            `json:"refundPercent,omitempty"`
 	RefundRecipient   *common.Address `json:"refundRecipient,omitempty"`
+}
+
+type SendBundleArgsVersioned struct {
+	Version string `json:"version"`
+}
+
+type SendBundleUnion struct {
+	v1bundle *SendMevBundleArgsV1
+	v2bundle *SendMevBundleArgsV2
+}
+
+func (p *SendBundleUnion) UnmarshalJSON(data []byte) error {
+	var versioned SendBundleArgsVersioned
+	if err := json.Unmarshal(data, &versioned); err != nil {
+		return err
+	}
+
+	// if version is v0.1 or beta-1 use V1, if v0.2 use V2
+	switch versioned.Version {
+	case VersionV1, "beta-1":
+		var bundle SendMevBundleArgsV1
+		if err := json.Unmarshal(data, &bundle); err != nil {
+			return err
+		}
+		p.v1bundle = &bundle
+	case VersionV2:
+		var bundle SendMevBundleArgsV2
+		if err := json.Unmarshal(data, &bundle); err != nil {
+			return err
+		}
+		p.v2bundle = &bundle
+	}
+	return nil
+}
+
+func (p *SendBundleUnion) MarshalJSON() ([]byte, error) {
+	if p.v1bundle != nil {
+		return json.Marshal(p.v1bundle)
+	}
+	if p.v2bundle != nil {
+		return json.Marshal(p.v2bundle)
+	}
+	return nil, ErrInvalidUnionBundle
 }

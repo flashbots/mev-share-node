@@ -96,7 +96,7 @@ func (q *SimQueue) Start(ctx context.Context) *sync.WaitGroup {
 	return wg
 }
 
-func (q *SimQueue) ScheduleBundleSimulation(ctx context.Context, bundle *SendMevBundleArgs, highPriority bool) error {
+func (q *SimQueue) ScheduleBundleSimulation(ctx context.Context, bundle *SendMevBundleArgsV1, highPriority bool) error {
 	data, err := json.Marshal(bundle)
 	if err != nil {
 		return err
@@ -112,7 +112,7 @@ type SimulationWorker struct {
 }
 
 func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simqueue.QueueItemInfo) error {
-	var bundle SendMevBundleArgs
+	var bundle SendMevBundleArgsV1
 	err := json.Unmarshal(data, &bundle)
 	if err != nil {
 		w.log.Error("Failed to unmarshal bundle simulation data", zap.Error(err))

@@ -146,7 +146,7 @@ func NewDBBackend(postgresDSN string) (*DBBackend, error) {
 	}, nil
 }
 
-func (b *DBBackend) GetBundle(ctx context.Context, hash common.Hash) (*SendMevBundleArgs, error) {
+func (b *DBBackend) GetBundle(ctx context.Context, hash common.Hash) (*SendMevBundleArgsV1, error) {
 	var dbSbundle DBSbundle
 	err := b.getBundle.GetContext(ctx, &dbSbundle, hash.Bytes())
 	if errors.Is(err, sql.ErrNoRows) {
@@ -155,7 +155,7 @@ func (b *DBBackend) GetBundle(ctx context.Context, hash common.Hash) (*SendMevBu
 		return nil, err
 	}
 
-	var bundle SendMevBundleArgs
+	var bundle SendMevBundleArgsV1
 	err = json.Unmarshal(dbSbundle.Body, &bundle)
 	if err != nil {
 		return nil, err
@@ -163,7 +163,7 @@ func (b *DBBackend) GetBundle(ctx context.Context, hash common.Hash) (*SendMevBu
 	return &bundle, nil
 }
 
-func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) error {
+func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBundleArgsV1, result *SimMevBundleResponse) error {
 	var dbBundle DBSbundle
 	var err error
 	if bundle.Metadata == nil {
@@ -241,7 +241,7 @@ func (b *DBBackend) CancelBundleByHash(ctx context.Context, hash common.Hash, si
 	return nil
 }
 
-func (b *DBBackend) InsertBundleForBuilder(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) error {
+func (b *DBBackend) InsertBundleForBuilder(ctx context.Context, bundle *SendMevBundleArgsV1, result *SimMevBundleResponse) error {
 	var dbBundle DBSbundleBuilder
 	var err error
 	if bundle.Metadata == nil {
