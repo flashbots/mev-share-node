@@ -16,6 +16,9 @@ import (
 )
 
 var (
+	ErrInvalidSendBundleArgument       = errors.New("invalid mev_sendBundle argument")
+	ErrInvalidSendMergedBundleArgument = errors.New("invalid mev_sendMergedBundle argument")
+
 	ErrInvalidInclusion      = errors.New("invalid inclusion")
 	ErrInvalidBundleBodySize = errors.New("invalid bundle body size")
 	ErrInvalidBundleBody     = errors.New("invalid bundle body")
@@ -32,11 +35,11 @@ var (
 )
 
 type SimScheduler interface {
-	ScheduleBundleSimulation(ctx context.Context, bundle *SendMevBundleArgs, highPriority bool) error
+	ScheduleBundleSimulation(ctx context.Context, bundle *SendMevBundleArgsV1, highPriority bool) error
 }
 
 type BundleStorage interface {
-	GetBundle(ctx context.Context, hash common.Hash) (*SendMevBundleArgs, error)
+	GetBundle(ctx context.Context, hash common.Hash) (*SendMevBundleArgsV1, error)
 	CancelBundleByHash(ctx context.Context, hash common.Hash, signer common.Address) error
 }
 
@@ -53,12 +56,12 @@ type API struct {
 	signer         types.Signer
 	simBackends    []SimulationBackend
 	simRateLimiter *rate.Limiter
-	builders       []BuilderBackend
+	builders       BuildersBackend
 
 	knownBundleCache *lru.Cache[common.Hash, struct{}]
 }
 
-func NewAPI(log *zap.Logger, scheduler SimScheduler, bundleStorage BundleStorage, eth EthClient, signer types.Signer, simBackends []SimulationBackend, simRateLimit rate.Limit, builders []BuilderBackend) *API {
+func NewAPI(log *zap.Logger, scheduler SimScheduler, bundleStorage BundleStorage, eth EthClient, signer types.Signer, simBackends []SimulationBackend, simRateLimit rate.Limit, builders BuildersBackend) *API {
 	return &API{
 		log: log,
 
@@ -74,8 +77,22 @@ func NewAPI(log *zap.Logger, scheduler SimScheduler, bundleStorage BundleStorage
 	}
 }
 
-func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMevBundleResponse, error) {
+func (m *API) SendBundle(ctx context.Context, union SendBundleUnion) (SendMevBundleResponse, error) {
 	logger := m.log
+
+	var bundle *SendMevBundleArgsV1
+	if union.v1bundle != nil {
+		bundle = union.v1bundle
+	} else if union.v2bundle != nil {
+		b, err := union.v2bundle.ToV1Bundle()
+		if err != nil {
+			logger.Warn("failed to convert bundle", zap.Error(err))
+			return SendMevBundleResponse{}, ErrInvalidSendBundleArgument
+		}
+		bundle = b
+	} else {
+		return SendMevBundleResponse{}, ErrInvalidSendBundleArgument
+	}
 
 	currentBlock, err := m.eth.BlockNumber(ctx)
 	if err != nil {
@@ -83,7 +100,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 		return SendMevBundleResponse{}, ErrInternalServiceError
 	}
 
-	hash, hasUnmatchedHash, err := ValidateBundle(&bundle, currentBlock, m.signer)
+	hash, hasUnmatchedHash, err := ValidateBundle(bundle, currentBlock, m.signer)
 	if err != nil {
 		logger.Warn("failed to validate bundle", zap.Error(err))
 		return SendMevBundleResponse{}, err
@@ -129,7 +146,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 			refundPercent = *unmatchedBundle.Privacy.WantRefund
 		}
 		bundle.Validity.Refund = []RefundConstraint{{0, refundPercent}}
-		MergePrivacyBuilders(&bundle)
+		MergePrivacyBuilders(bundle)
 		err = MergeInclusionIntervals(&bundle.Inclusion, &unmatchedBundle.Inclusion)
 		if err != nil {
 			return SendMevBundleResponse{}, ErrBackrunInclusion
@@ -137,7 +154,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 	}
 
 	highPriority := jsonrpcserver.GetPriority(ctx)
-	err = m.scheduler.ScheduleBundleSimulation(ctx, &bundle, highPriority)
+	err = m.scheduler.ScheduleBundleSimulation(ctx, bundle, highPriority)
 	if err != nil {
 		logger.Error("Failed to schedule bundle simulation", zap.Error(err))
 		return SendMevBundleResponse{}, ErrInternalServiceError
@@ -148,7 +165,16 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 	}, nil
 }
 
-func (m *API) SimBundle(ctx context.Context, bundle SendMevBundleArgs, aux SimMevBundleAuxArgs) (*SimMevBundleResponse, error) {
+func (m *API) SendMergedBundle(ctx context.Context, union SendMergedBundleArgsV2) (SendMevBundleResponse, error) {
+	bundle, err := union.ToV1Bundle()
+	if err != nil {
+		return SendMevBundleResponse{}, ErrInvalidSendMergedBundleArgument
+	}
+
+	return m.SendBundle(ctx, SendBundleUnion{v1bundle: bundle, v2bundle: nil})
+}
+
+func (m *API) SimBundle(ctx context.Context, bundle SendMevBundleArgsV1, aux SimMevBundleAuxArgs) (*SimMevBundleResponse, error) {
 	if len(m.simBackends) == 0 {
 		return nil, ErrInternalServiceError
 	}
@@ -181,12 +207,7 @@ func (m *API) CancelBundleByHash(ctx context.Context, hash common.Hash) error {
 		return ErrBundleNotCancelled
 	}
 
-	for _, builder := range m.builders {
-		err := builder.CancelBundleByHash(ctx, hash)
-		if err != nil {
-			m.log.Warn("Failed to cancel bundle by hash", zap.Error(err), zap.String("builder", builder.String()))
-		}
-	}
+	m.builders.CancelBundleByHash(ctx, m.log, hash)
 	m.log.Info("Bundle cancelled", zap.String("hash", hash.Hex()))
 	return nil
 }

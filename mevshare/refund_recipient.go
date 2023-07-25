@@ -9,7 +9,7 @@ import (
 
 var ErrCantConvertToRefRecBundle = errors.New("can't convert bundle to ref recipient bundle")
 
-func extractTxsForRefundRecipientBundle(depth int, bundle *SendMevBundleArgs) (txs []hexutil.Bytes, canRevert []common.Hash, err error) {
+func extractTxsForRefundRecipientBundle(depth int, bundle *SendMevBundleArgsV1) (txs []hexutil.Bytes, canRevert []common.Hash, err error) {
 	if depth > MaxNestingLevel {
 		return nil, nil, ErrInvalidBundleBody
 	}
@@ -44,7 +44,7 @@ func extractTxsForRefundRecipientBundle(depth int, bundle *SendMevBundleArgs) (t
 	return txs, canRevert, nil
 }
 
-func extractRefundDataForRefundRecipientData(bundle *SendMevBundleArgs) (percent *int, address *common.Address, err error) {
+func extractRefundDataForRefundRecipientData(bundle *SendMevBundleArgsV1) (percent *int, address *common.Address, err error) {
 	if len(bundle.Validity.Refund) == 0 {
 		// no refund is specified
 		return nil, nil, nil
@@ -94,7 +94,7 @@ func extractRefundDataForRefundRecipientData(bundle *SendMevBundleArgs) (percent
 	}
 }
 
-func ConvertBundleToRefundRecipient(bundle *SendMevBundleArgs) (res SendRefundRecBundleArgs, err error) {
+func ConvertBundleToRefundRecipient(bundle *SendMevBundleArgsV1) (res SendRefundRecBundleArgs, err error) {
 	res.BlockNumber = bundle.Inclusion.BlockNumber
 	txs, canRevert, err := extractTxsForRefundRecipientBundle(0, bundle)
 	if err != nil {

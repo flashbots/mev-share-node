@@ -15,7 +15,7 @@ var (
 	ErrInvalidBundlePrivacy     = errors.New("invalid bundle privacy")
 )
 
-func cleanBody(bundle *SendMevBundleArgs) {
+func cleanBody(bundle *SendMevBundleArgsV1) {
 	for _, el := range bundle.Body {
 		if el.Hash != nil {
 			el.Tx = nil
@@ -60,11 +60,11 @@ func MergeBuilders(topLevel, inner *MevBundlePrivacy) {
 	topLevel.Builders = Intersect(topLevel.Builders, inner.Builders)
 }
 
-func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint64, signer types.Signer) (hash common.Hash, txs int, unmatched bool, err error) { //nolint:gocognit,gocyclo
+func validateBundleInner(level int, bundle *SendMevBundleArgsV1, currentBlock uint64, signer types.Signer) (hash common.Hash, txs int, unmatched bool, err error) { //nolint:gocognit,gocyclo
 	if level > MaxNestingLevel {
 		return hash, txs, unmatched, ErrBundleTooDeep
 	}
-	if bundle.Version != "beta-1" && bundle.Version != "v0.1" {
+	if bundle.Version != "beta-1" && bundle.Version != VersionV1 {
 		return hash, txs, unmatched, ErrUnsupportedBundleVersion
 	}
 
@@ -209,12 +209,12 @@ func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint
 	return hash, txs, unmatched, nil
 }
 
-func ValidateBundle(bundle *SendMevBundleArgs, currentBlock uint64, signer types.Signer) (hash common.Hash, unmatched bool, err error) {
+func ValidateBundle(bundle *SendMevBundleArgsV1, currentBlock uint64, signer types.Signer) (hash common.Hash, unmatched bool, err error) {
 	hash, _, unmatched, err = validateBundleInner(0, bundle, currentBlock, signer)
 	return hash, unmatched, err
 }
 
-func mergePrivacyBuildersInner(bundle *SendMevBundleArgs, topLevel *MevBundlePrivacy) {
+func mergePrivacyBuildersInner(bundle *SendMevBundleArgsV1, topLevel *MevBundlePrivacy) {
 	MergeBuilders(topLevel, bundle.Privacy)
 	for _, el := range bundle.Body {
 		if el.Bundle != nil {
@@ -224,6 +224,6 @@ func mergePrivacyBuildersInner(bundle *SendMevBundleArgs, topLevel *MevBundlePri
 }
 
 // MergePrivacyBuilders Sets privacy.builders to the intersection of all privacy.builders in the bundle
-func MergePrivacyBuilders(bundle *SendMevBundleArgs) {
+func MergePrivacyBuilders(bundle *SendMevBundleArgsV1) {
 	mergePrivacyBuildersInner(bundle, bundle.Privacy)
 }
