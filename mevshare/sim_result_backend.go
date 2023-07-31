@@ -56,7 +56,32 @@ func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
 	}
 	logger := s.log.With(zap.String("bundle", hash.Hex()))
 
-	// failed bundle does not go to the builder
+	go func(ctx context.Context) {
+		// failed bundle does not go to the builder
+		if !sim.Success {
+			return
+		}
+
+		err := s.ProcessHints(ctx, bundle, sim)
+		if err != nil {
+			logger.Error("Failed to process hints", zap.Error(err))
+		}
+
+		for _, builder := range s.builders {
+			err := builder.SendMatchedShareBundle(ctx, bundle)
+			if err != nil {
+				logger.Warn("Failed to send bundle to builder", zap.Error(err))
+			}
+		}
+
+		err = s.store.InsertBundleForBuilder(ctx, bundle, sim)
+		if err != nil {
+			logger.Error("Failed to insert bundle for builder", zap.Error(err))
+		}
+
+		s.externalBuilders.SendBundle(ctx, logger, bundle)
+	}(context.Background())
+
 	err := s.store.InsertBundleForStats(ctx, bundle, sim)
 	if err != nil {
 		if errors.Is(err, ErrKnownBundle) {
@@ -65,28 +90,6 @@ func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
 		}
 		logger.Error("Failed to insert bundle for stats", zap.Error(err))
 	}
-	if !sim.Success {
-		return nil
-	}
-
-	err = s.ProcessHints(ctx, bundle, sim)
-	if err != nil {
-		logger.Error("Failed to process hints", zap.Error(err))
-	}
-
-	for _, builder := range s.builders {
-		err := builder.SendMatchedShareBundle(ctx, bundle)
-		if err != nil {
-			logger.Warn("Failed to send bundle to builder", zap.Error(err))
-		}
-	}
-
-	err = s.store.InsertBundleForBuilder(ctx, bundle, sim)
-	if err != nil {
-		logger.Error("Failed to insert bundle for builder", zap.Error(err))
-	}
-
-	s.externalBuilders.SendBundle(ctx, logger, bundle)
 
 	return nil
 }
