@@ -37,12 +37,11 @@ var (
 	defaultRedisEndpoint         = getEnvOrDefault("REDIS_ENDPOINT", "redis://localhost:6379")
 	defaultSimulationsEndpoint   = getEnvOrDefault("SIMULATION_ENDPOINTS", "http://127.0.0.1:8545")
 	defaultWorkersPerNode        = getEnvOrDefault("WORKERS_PER_SIM_ENDPOINT", "2")
-	defaultBuildersEndpoint      = getEnvOrDefault("BUILDER_ENDPOINTS", "http://127.0.0.1:8545")
 	defaultPostgresDSN           = getEnvOrDefault("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
 	defaultEthEndpoint           = getEnvOrDefault("ETH_ENDPOINT", "http://127.0.0.1:8545")
 	defaultMevSimBundleRateLimit = getEnvOrDefault("MEV_SIM_BUNDLE_RATE_LIMIT", "5")
-	// See `ParseExternalBuilders` external_builders.go for more info
-	defaultExternalBuilders = getEnvOrDefault("EXTERNAL_BUILDERS", "")
+	// See `BuildersConfig` external_builders.go for more info
+	defaultBuildersConfig   = getEnvOrDefault("BUILDERS_CONFIG", "builders.yaml")
 	defaultShareGasUsed     = getEnvOrDefault("SHARE_GAS_USED", "0")
 	defaultShareMevGasPrice = getEnvOrDefault("SHARE_MEV_GAS_PRICE", "1")
 
@@ -55,11 +54,10 @@ var (
 	redisPtr                 = flag.String("redis", defaultRedisEndpoint, "redis url string")
 	simEndpointPtr           = flag.String("sim-endpoint", defaultSimulationsEndpoint, "simulation endpoints (comma separated)")
 	workersPerNodePtr        = flag.String("workers-per-node", defaultWorkersPerNode, "number of workers per simulation node")
-	buildersEndpointPtr      = flag.String("builder-endpoint", defaultBuildersEndpoint, "builder endpoint")
 	postgresDSNPtr           = flag.String("postgres-dsn", defaultPostgresDSN, "postgres dsn")
 	ethPtr                   = flag.String("eth", defaultEthEndpoint, "eth endpoint")
 	meVSimBundleRateLimitPtr = flag.String("mev-sim-bundle-rate-limit", defaultMevSimBundleRateLimit, "mev sim bundle rate limit for external users (calls per second)")
-	externalBuildersPtr      = flag.String("external-builders", defaultExternalBuilders, "external builders (e.g. name,rpc1,api;name,rpc2,api)")
+	buildersConfigPtr        = flag.String("builders-config", defaultBuildersConfig, "builders config file")
 	shareGasUsedPtr          = flag.String("share-gas-used", defaultShareGasUsed, "share gas used in hints (0-1)")
 	shareMevGasPricePtr      = flag.String("share-mev-gas-price", defaultShareMevGasPrice, "share mev gas price in hints (0-1)")
 )
@@ -108,10 +106,9 @@ func main() {
 		logger.Fatal("Failed to create redis hint backend", zap.Error(err))
 	}
 
-	var builderBackends []mevshare.BuilderBackend //nolint:prealloc
-	for _, builderEndpoint := range strings.Split(*buildersEndpointPtr, ",") {
-		builderBackend := mevshare.NewJSONRPCBuilder(builderEndpoint)
-		builderBackends = append(builderBackends, builderBackend)
+	buildersBackend, err := mevshare.LoadBuilderConfig(*buildersConfigPtr)
+	if err != nil {
+		logger.Fatal("Failed to load builders config", zap.Error(err))
 	}
 
 	ethBackend, err := ethclient.Dial(*ethPtr)
@@ -124,14 +121,9 @@ func main() {
 		logger.Fatal("Failed to create postgres backend", zap.Error(err))
 	}
 
-	externalBuilders, err := mevshare.ParseExternalBuilders(*externalBuildersPtr)
-	if err != nil {
-		logger.Fatal("Failed to parse external builders", zap.Error(err))
-	}
-
 	shareGasUsed := *shareGasUsedPtr == "1"
 	shareMevGasPrice := *shareMevGasPricePtr == "1"
-	simResultBackend := mevshare.NewSimulationResultBackend(logger, hintBackend, builderBackends, ethBackend, dbBackend, externalBuilders, shareGasUsed, shareMevGasPrice)
+	simResultBackend := mevshare.NewSimulationResultBackend(logger, hintBackend, buildersBackend, ethBackend, dbBackend, shareGasUsed, shareMevGasPrice)
 
 	redisQueue := simqueue.NewRedisQueue(logger, redisClient, "node")
 
@@ -159,7 +151,7 @@ func main() {
 
 	cachingEthBackend := mevshare.NewCachingEthClient(ethBackend)
 
-	api := mevshare.NewAPI(logger, simQueue, dbBackend, cachingEthBackend, signer, simBackends, rate.Limit(rateLimit), builderBackends)
+	api := mevshare.NewAPI(logger, simQueue, dbBackend, cachingEthBackend, signer, simBackends, rate.Limit(rateLimit), buildersBackend)
 
 	jsonRPCServer, err := jsonrpcserver.NewHandler(jsonrpcserver.Methods{
 		"mev_sendBundle":         api.SendBundle,
