@@ -53,12 +53,12 @@ type API struct {
 	signer         types.Signer
 	simBackends    []SimulationBackend
 	simRateLimiter *rate.Limiter
-	builders       []BuilderBackend
+	builders       BuildersBackend
 
 	knownBundleCache *lru.Cache[common.Hash, struct{}]
 }
 
-func NewAPI(log *zap.Logger, scheduler SimScheduler, bundleStorage BundleStorage, eth EthClient, signer types.Signer, simBackends []SimulationBackend, simRateLimit rate.Limit, builders []BuilderBackend) *API {
+func NewAPI(log *zap.Logger, scheduler SimScheduler, bundleStorage BundleStorage, eth EthClient, signer types.Signer, simBackends []SimulationBackend, simRateLimit rate.Limit, builders BuildersBackend) *API {
 	return &API{
 		log: log,
 
@@ -181,12 +181,8 @@ func (m *API) CancelBundleByHash(ctx context.Context, hash common.Hash) error {
 		return ErrBundleNotCancelled
 	}
 
-	for _, builder := range m.builders {
-		err := builder.CancelBundleByHash(ctx, hash)
-		if err != nil {
-			m.log.Warn("Failed to cancel bundle by hash", zap.Error(err), zap.String("builder", builder.String()))
-		}
-	}
-	m.log.Info("Bundle cancelled", zap.String("hash", hash.Hex()))
+	logger := m.log.With(zap.String("bundle", hash.Hex()))
+	m.builders.CancelBundleByHash(ctx, logger, hash)
+	logger.Info("Bundle cancelled")
 	return nil
 }
