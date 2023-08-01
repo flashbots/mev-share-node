@@ -14,22 +14,33 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var ErrInvalidBuilder = errors.New("invalid builder specification")
+
 type BuilderAPI uint8
 
 const (
-	BuilderAPIRefRecipient BuilderAPI = iota
+	BuilderAPIRefundRecipient BuilderAPI = iota
 	BuilderAPIMevShareBeta1
 )
 
-var ErrInvalidBuilder = errors.New("invalid builder specification")
+func parseBuilderAPI(api string) (BuilderAPI, error) {
+	switch api {
+	case "refund-recipient":
+		return BuilderAPIRefundRecipient, nil
+	case "v0.1":
+		return BuilderAPIMevShareBeta1, nil
+	default:
+		return 0, ErrInvalidBuilder
+	}
+}
 
 type BuildersConfig struct {
 	Builders []struct {
 		Name     string `yaml:"name"`
 		URL      string `yaml:"url"`
 		API      string `yaml:"api"`
-		Internal bool   `yaml:"internal"`
-		Disabled bool   `yaml:"disabled"`
+		Internal bool   `yaml:"internal,omitempty"`
+		Disabled bool   `yaml:"disabled,omitempty"`
 	} `yaml:"builders"`
 }
 
@@ -53,14 +64,9 @@ func LoadBuilderConfig(file string) (BuildersBackend, error) {
 			continue
 		}
 
-		var api BuilderAPI
-		switch builder.API {
-		case "refund-recipient":
-			api = BuilderAPIRefRecipient
-		case "v0.1":
-			api = BuilderAPIMevShareBeta1
-		default:
-			return BuildersBackend{}, ErrInvalidBuilder
+		api, err := parseBuilderAPI(builder.API)
+		if err != nil {
+			return BuildersBackend{}, err
 		}
 
 		builderBackend := JSONRPCBuilderBackend{
@@ -95,7 +101,7 @@ type JSONRPCBuilderBackend struct {
 
 func (b *JSONRPCBuilderBackend) SendBundle(ctx context.Context, bundle *SendMevBundleArgs) error {
 	switch b.API {
-	case BuilderAPIRefRecipient:
+	case BuilderAPIRefundRecipient:
 		refRec, err := ConvertBundleToRefundRecipient(bundle)
 		if err != nil {
 			return err
