@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,7 +64,7 @@ func LoadBuilderConfig(file string) (BuildersBackend, error) {
 		}
 
 		builderBackend := JSONRPCBuilderBackend{
-			Name:   builder.Name,
+			Name:   strings.ToLower(builder.Name),
 			Client: jsonrpc.NewClient(builder.URL),
 			API:    api,
 		}
@@ -168,6 +169,8 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 
 		buildersUsed := make(map[string]struct{})
 		for _, target := range builders {
+			target = strings.ToLower(target)
+
 			if target == "default" || target == "flashbots" {
 				// right now we always send to flashbots and default means flashbots
 				continue
