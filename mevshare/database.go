@@ -180,7 +180,7 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 	dbBundle.SimEffGasPrice = sql.NullString{String: dbIntToEth(&result.MevGasPrice), Valid: result.Success}
 	dbBundle.SimProfit = sql.NullString{String: dbIntToEth(&result.Profit), Valid: result.Success}
 	dbBundle.SimRefundableValue = sql.NullString{String: dbIntToEth(&result.RefundableValue), Valid: result.Success}
-	dbBundle.SimGasUsed = sql.NullInt64{Int64: int64(result.GasUsed), Valid: result.Success}
+	dbBundle.SimGasUsed = sql.NullInt64{Int64: int64(result.GasUsed), Valid: true}
 	dbBundle.Body, err = json.Marshal(bundle)
 	if err != nil {
 		return err
