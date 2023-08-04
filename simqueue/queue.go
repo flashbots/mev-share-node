@@ -64,6 +64,7 @@ package simqueue
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -82,12 +83,14 @@ var (
 	ErrRequeueFailed        = errors.New("item requeue failed")
 )
 
-const (
-	DefaultMaxRetries                     = uint16(30)
-	DefaultMaxUnprocessedItemsForLowPrio  = uint64(1024)
-	DefaultMaxUnprocessedItemsForHighPrio = uint64(2048)
-	DefaultWorkerTimout                   = 4 * time.Second
-)
+var DefaultQueueConfig = RedisQueueConfig{
+	MaxRetries:                          30,
+	MaxQueuedProcessableItemsLowPrio:    1024,
+	MaxQueuedProcessableItemsHighPrio:   1024 * 2,
+	MaxQueuedUnprocessableItemsLowPrio:  1024 * 3,
+	MaxQueuedUnprocessableItemsHighPrio: 1024 * 4,
+	WorkerTimeout:                       4 * time.Second,
+}
 
 // Errors returned by ProcessFunc.
 var (
@@ -110,30 +113,42 @@ type Queue interface {
 	StartProcessLoop(ctx context.Context, workers []ProcessFunc) *sync.WaitGroup
 }
 
+// RedisQueueConfig is the configuration for RedisQueue.
+// See DefaultQueueConfig for the default values.
+// Can be loaded from environment variables using ConfigFromEnv.
+type RedisQueueConfig struct {
+	// MaxRetries is the maximum number of simulations for a single item.
+	MaxRetries uint16
+	// MaxQueuedProcessableItemsLowPrio is the maximum number of items that can be queued for immediate processing (low prio).
+	MaxQueuedProcessableItemsLowPrio uint64
+	// MaxQueuedProcessableItemsHighPrio is the maximum number of items that can be queued for immediate processing (high prio).
+	MaxQueuedProcessableItemsHighPrio uint64
+	// MaxQueuedUnprocessableItemsLowPrio is the maximum number of items that can be queued for processing in the future (low prio).
+	MaxQueuedUnprocessableItemsLowPrio uint64
+	// MaxQueuedUnprocessableItemsHighPrio is the maximum number of items that can be queued for processing in the future (high prio).
+	MaxQueuedUnprocessableItemsHighPrio uint64
+	// WorkerTimeout is the maximum time a worker can process an item.
+	WorkerTimeout time.Duration
+}
+
 type RedisQueue struct {
 	log          *zap.Logger
 	red          *redis.Client
 	currentBlock *uint64
 	queueName    string
 
-	MaxRetries                  uint16
-	MaxUnprocessedItemsLowPrio  uint64
-	MaxUnprocessedItemsHighPrio uint64
-	WorkerTimeout               time.Duration
+	Config RedisQueueConfig
 }
 
 func NewRedisQueue(log *zap.Logger, red *redis.Client, queueName string) *RedisQueue {
 	currentBlock := uint64(0)
 	log = log.With(zap.String("queue", queueName))
 	return &RedisQueue{
-		log:                         log,
-		red:                         red,
-		currentBlock:                &currentBlock,
-		queueName:                   queueName,
-		MaxRetries:                  DefaultMaxRetries,
-		MaxUnprocessedItemsLowPrio:  DefaultMaxUnprocessedItemsForLowPrio,
-		MaxUnprocessedItemsHighPrio: DefaultMaxUnprocessedItemsForHighPrio,
-		WorkerTimeout:               DefaultWorkerTimout,
+		log:          log,
+		red:          red,
+		currentBlock: &currentBlock,
+		queueName:    queueName,
+		Config:       DefaultQueueConfig,
 	}
 }
 
@@ -178,24 +193,55 @@ func (s *RedisQueue) Push(ctx context.Context, data []byte, highPriority bool, m
 	return nil
 }
 
-// returns number of items in the queue that should be eventually processed
-func (s *RedisQueue) queuedItems(ctx context.Context) (uint64, error) {
-	return s.red.ZCard(ctx, s.queueName).Uint64()
+// queuedItems returns number of items in the queue that should be eventually processed
+// processable are the items that can be processed now
+// unprocessable are the items that can be processed on the future blocks
+func (s *RedisQueue) queuedItems(ctx context.Context) (processable, unprocessable uint64, err error) {
+	currentBlock := atomic.LoadUint64(s.currentBlock)
+	nextBlock := currentBlock + 1
+
+	processable, err = s.red.ZCount(ctx, s.queueName, "-inf", strconv.FormatUint(nextBlock, 10)).Uint64()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	unprocessable, err = s.red.ZCount(ctx, s.queueName, strconv.FormatUint(nextBlock+1, 10), "+inf").Uint64()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return processable, unprocessable, nil
 }
 
 func (s *RedisQueue) pushToQueue(ctx context.Context, args packArgs) error {
-	queued, err := s.queuedItems(ctx)
+	processable, unprocessable, err := s.queuedItems(ctx)
 	if err != nil {
 		s.log.Warn("failed to get queued items", zap.Error(err))
 		return err
 	}
-	threshold := s.MaxUnprocessedItemsLowPrio
-	if args.highPriority {
-		threshold = s.MaxUnprocessedItemsHighPrio
-	}
-	if queued >= threshold {
-		s.log.Error("too many unprocessed items in the queue", zap.Uint64("queued", queued), zap.Uint64("max_unprocessed_items", threshold))
-		return ErrQueueFull
+
+	nextBlock := atomic.LoadUint64(s.currentBlock) + 1
+
+	canProcessItem := args.minTargetBlock <= nextBlock
+
+	if canProcessItem {
+		threshold := s.Config.MaxQueuedProcessableItemsLowPrio
+		if args.highPriority {
+			threshold = s.Config.MaxQueuedProcessableItemsHighPrio
+		}
+		if processable >= threshold {
+			s.log.Error("too many queued processable items in the queue", zap.Uint64("max_processable_items", threshold))
+			return ErrQueueFull
+		}
+	} else {
+		threshold := s.Config.MaxQueuedUnprocessableItemsLowPrio
+		if args.highPriority {
+			threshold = s.Config.MaxQueuedUnprocessableItemsHighPrio
+		}
+		if unprocessable >= threshold {
+			s.log.Error("too many queued unprocessable items in the queue", zap.Uint64("max_unprocessable_items", threshold))
+			return ErrQueueFull
+		}
 	}
 
 	score, redisData := packData(args)
@@ -281,7 +327,7 @@ func (s *RedisQueue) processNextItem(ctx context.Context, process ProcessFunc) e
 	}
 
 	// process item
-	workerCtx, workerCancel := context.WithTimeout(ctx, s.WorkerTimeout)
+	workerCtx, workerCancel := context.WithTimeout(ctx, s.Config.WorkerTimeout)
 	defer workerCancel()
 	info := QueueItemInfo{Retries: int(args.iteration)}
 	err = process(workerCtx, args.data, info)
@@ -347,7 +393,7 @@ func (s *RedisQueue) StartProcessLoop(ctx context.Context, workers []ProcessFunc
 }
 
 func (s *RedisQueue) retryItem(ctx context.Context, args packArgs, incrIteration, incrBlock bool, back backoff.BackOff) error {
-	if args.iteration >= s.MaxRetries {
+	if args.iteration >= s.Config.MaxRetries {
 		return ErrMaxRetriesReached
 	}
 

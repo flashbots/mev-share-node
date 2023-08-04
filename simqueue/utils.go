@@ -3,6 +3,8 @@ package simqueue
 import (
 	"encoding/binary"
 	"errors"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -51,4 +53,60 @@ func unpackData(score float64, packedData []byte) (packArgs, error) {
 		timestamp:      time.Unix(0, int64(binary.BigEndian.Uint64(packedData[3:11]))),
 		iteration:      binary.BigEndian.Uint16(packedData[1:3]),
 	}, nil
+}
+
+// ConfigFromEnv loads `simqueue` config from environment.
+// - `SIMQUEUE_MAX_RETRIES`
+// - `SIMQUEUE_MAX_QUEUED_PROCESSABLE_ITEMS_LOW_PRIO`
+// - `SIMQUEUE_MAX_QUEUED_PROCESSABLE_ITEMS_HIGH_PRIO`
+// - `SIMQUEUE_MAX_QUEUED_UNPROCESSABLE_ITEMS_LOW_PRIO`
+// - `SIMQUEUE_MAX_QUEUED_UNPROCESSABLE_ITEMS_HIGH_PRIO`
+// - `SIMQUEUE_WORKER_TIMEOUT_MS`
+func ConfigFromEnv() (RedisQueueConfig, error) {
+	config := DefaultQueueConfig
+
+	if val := os.Getenv("SIMQUEUE_MAX_RETRIES"); val != "" {
+		maxRetries, err := strconv.ParseUint(val, 10, 16)
+		if err != nil {
+			return config, err
+		}
+		config.MaxRetries = uint16(maxRetries)
+	}
+	if val := os.Getenv("SIMQUEUE_MAX_QUEUED_PROCESSABLE_ITEMS_LOW_PRIO"); val != "" {
+		maxQueuedProcessableItems, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return config, err
+		}
+		config.MaxQueuedProcessableItemsLowPrio = maxQueuedProcessableItems
+	}
+	if val := os.Getenv("SIMQUEUE_MAX_QUEUED_PROCESSABLE_ITEMS_HIGH_PRIO"); val != "" {
+		maxQueuedProcessableItems, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return config, err
+		}
+		config.MaxQueuedProcessableItemsHighPrio = maxQueuedProcessableItems
+	}
+	if val := os.Getenv("SIMQUEUE_MAX_QUEUED_UNPROCESSABLE_ITEMS_LOW_PRIO"); val != "" {
+		maxQueuedUnprocessableItems, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return config, err
+		}
+		config.MaxQueuedUnprocessableItemsLowPrio = maxQueuedUnprocessableItems
+	}
+	if val := os.Getenv("SIMQUEUE_MAX_QUEUED_UNPROCESSABLE_ITEMS_HIGH_PRIO"); val != "" {
+		maxQueuedUnprocessableItems, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return config, err
+		}
+		config.MaxQueuedUnprocessableItemsHighPrio = maxQueuedUnprocessableItems
+	}
+	if val := os.Getenv("SIMQUEUE_WORKER_TIMEOUT_MS"); val != "" {
+		workerTimeoutMs, err := strconv.Atoi(val)
+		if err != nil {
+			return config, err
+		}
+		config.WorkerTimeout = time.Duration(workerTimeoutMs) * time.Millisecond
+	}
+
+	return config, nil
 }

@@ -216,9 +216,9 @@ func TestRedisQueue(t *testing.T) {
 
 	// test processing when processor returns error too many times
 	t.Run("test processing with error, unrecoverable", func(t *testing.T) {
-		r.queue.MaxRetries = 2
+		r.queue.Config.MaxRetries = 2
 		defer func() {
-			r.queue.MaxRetries = DefaultMaxRetries
+			r.queue.Config.MaxRetries = DefaultQueueConfig.MaxRetries
 		}()
 
 		processErr := func(ctx context.Context, data []byte, info QueueItemInfo) error {
@@ -252,9 +252,9 @@ func TestRedisQueue(t *testing.T) {
 func testQueueReschedUnrecoverable(t *testing.T, r queueRunner, worker *testWorker) {
 	t.Helper()
 	ctx := context.Background()
-	r.queue.MaxRetries = 3
+	r.queue.Config.MaxRetries = 3
 	defer func() {
-		r.queue.MaxRetries = DefaultMaxRetries
+		r.queue.Config.MaxRetries = DefaultQueueConfig.MaxRetries
 	}()
 
 	var (
@@ -302,9 +302,9 @@ func testQueueReschedUnrecoverable(t *testing.T, r queueRunner, worker *testWork
 func testQueueResched(t *testing.T, r queueRunner, worker *testWorker) {
 	t.Helper()
 	ctx := context.Background()
-	r.queue.MaxRetries = 3
+	r.queue.Config.MaxRetries = 3
 	defer func() {
-		r.queue.MaxRetries = DefaultMaxRetries
+		r.queue.Config.MaxRetries = DefaultQueueConfig.MaxRetries
 	}()
 
 	var (
@@ -363,55 +363,82 @@ func testQueuePush(t *testing.T, r queueRunner, worker *testWorker) {
 	t.Helper()
 	ctx := context.Background()
 
-	r.queue.MaxUnprocessedItemsLowPrio = 3
-	r.queue.MaxUnprocessedItemsHighPrio = 4
+	r.queue.Config.MaxQueuedProcessableItemsLowPrio = 3
+	r.queue.Config.MaxQueuedProcessableItemsHighPrio = 4
+	r.queue.Config.MaxQueuedUnprocessableItemsLowPrio = 1
+	r.queue.Config.MaxQueuedUnprocessableItemsHighPrio = 2
 	defer func() {
-		r.queue.MaxUnprocessedItemsLowPrio = DefaultMaxUnprocessedItemsForLowPrio
-		r.queue.MaxUnprocessedItemsHighPrio = DefaultMaxUnprocessedItemsForHighPrio
+		r.queue.Config = DefaultQueueConfig
 	}()
 
 	err := r.queue.UpdateBlock(3)
 	require.NoError(t, err)
 
-	queued, err := r.queue.queuedItems(ctx)
+	proc, unproc, err := r.queue.queuedItems(ctx)
 	require.NoError(t, err)
-	require.Equal(t, uint64(0), queued)
+	require.Equal(t, uint64(0), proc)
+	require.Equal(t, uint64(0), unproc)
 
 	// adding stale element fails
 	err = r.queue.Push(ctx, []byte("test-stale"), false, 2, 3)
 	require.ErrorIs(t, err, ErrStaleItem)
 
-	queued, err = r.queue.queuedItems(ctx)
+	proc, unproc, err = r.queue.queuedItems(ctx)
 	require.NoError(t, err)
-	require.Equal(t, uint64(0), queued)
+	require.Equal(t, uint64(0), proc)
+	require.Equal(t, uint64(0), unproc)
 
-	// add 3 items
-	err = r.queue.Push(ctx, []byte("test-full"), false, 3, 4)
+	// add 3 processable items
+	err = r.queue.Push(ctx, []byte("test-full"), false, 2, 4)
 	require.NoError(t, err)
 	err = r.queue.Push(ctx, []byte("test-full"), false, 3, 5)
 	require.NoError(t, err)
+	err = r.queue.Push(ctx, []byte("test-full"), false, 4, 6)
+	require.NoError(t, err)
+
+	// add 1 unprocessable items
+	err = r.queue.Push(ctx, []byte("test-full"), false, 5, 5)
+	require.NoError(t, err)
+
+	proc, unproc, err = r.queue.queuedItems(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), proc)
+	require.Equal(t, uint64(1), unproc)
+
+	// add 1 low-prio processable item, should fail
+	err = r.queue.Push(ctx, []byte("test-full"), false, 4, 4)
+	require.ErrorIs(t, err, ErrQueueFull)
+
+	// add 1 high-prio processable item, should work
+	err = r.queue.Push(ctx, []byte("test-full"), true, 4, 4)
+	require.NoError(t, err)
+
+	proc, unproc, err = r.queue.queuedItems(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), proc)
+	require.Equal(t, uint64(1), unproc)
+
+	// add 1 low-prio unprocessable item, should fail
 	err = r.queue.Push(ctx, []byte("test-full"), false, 5, 6)
-	require.NoError(t, err)
-
-	queued, err = r.queue.queuedItems(ctx)
-	require.NoError(t, err)
-	require.Equal(t, uint64(3), queued)
-
-	// adding 4th item fails
-	err = r.queue.Push(ctx, []byte("test-full"), false, 3, 7)
 	require.ErrorIs(t, err, ErrQueueFull)
 
-	// adding 4th high prio item ok
-	err = r.queue.Push(ctx, []byte("test-full"), true, 3, 7)
+	// add 1 high-prio unprocessable item, should work
+	err = r.queue.Push(ctx, []byte("test-full"), true, 5, 6)
 	require.NoError(t, err)
 
-	// adding 5th high prio item fails
-	err = r.queue.Push(ctx, []byte("test-full"), true, 3, 7)
+	proc, unproc, err = r.queue.queuedItems(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), proc)
+	require.Equal(t, uint64(2), unproc)
+
+	// add 1 high-prio unprocessable item, should fail
+	err = r.queue.Push(ctx, []byte("test-full"), true, 5, 6)
 	require.ErrorIs(t, err, ErrQueueFull)
 
-	queued, err = r.queue.queuedItems(ctx)
+	proc, unproc, err = r.queue.queuedItems(ctx)
 	require.NoError(t, err)
-	require.Equal(t, uint64(4), queued)
+	require.Equal(t, uint64(4), proc)
+	require.Equal(t, uint64(2), unproc)
 
 	require.Nil(t, worker.nextProcessed(processTimeout))
 
@@ -430,8 +457,10 @@ func BenchmarkQueue(b *testing.B) {
 		return nil
 	}
 	queue := NewRedisQueue(log, red, "queue_test")
-	queue.MaxUnprocessedItemsHighPrio = 1000000
-	queue.MaxUnprocessedItemsLowPrio = 1000000
+	queue.Config.MaxQueuedProcessableItemsLowPrio = 1000000
+	queue.Config.MaxQueuedProcessableItemsHighPrio = 1000000
+	queue.Config.MaxQueuedUnprocessableItemsLowPrio = 1000000
+	queue.Config.MaxQueuedUnprocessableItemsHighPrio = 1000000
 	err := queue.CleanQueues(ctx)
 	require.NoError(b, err)
 
