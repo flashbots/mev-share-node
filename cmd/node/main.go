@@ -28,6 +28,8 @@ import (
 var (
 	version = "dev" // is set during build process
 
+	// Simqueue is configured using its own env variables, see `simqueue` package.
+
 	// Default values
 	defaultDebug                 = os.Getenv("DEBUG") == "1"
 	defaultLogProd               = os.Getenv("LOG_PROD") == "1"
@@ -61,6 +63,14 @@ var (
 	shareGasUsedPtr          = flag.String("share-gas-used", defaultShareGasUsed, "share gas used in hints (0-1)")
 	shareMevGasPricePtr      = flag.String("share-mev-gas-price", defaultShareMevGasPrice, "share mev gas price in hints (0-1)")
 )
+
+func GetEnvOrDefaultUint(key string, defaultValue uint64) uint64 {
+	value, err := strconv.ParseUint(os.Getenv(key), 10, 64)
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
 
 func main() {
 	flag.Parse()
@@ -126,6 +136,11 @@ func main() {
 	simResultBackend := mevshare.NewSimulationResultBackend(logger, hintBackend, buildersBackend, ethBackend, dbBackend, shareGasUsed, shareMevGasPrice)
 
 	redisQueue := simqueue.NewRedisQueue(logger, redisClient, "node")
+	redisQueueConfig, err := simqueue.ConfigFromEnv()
+	if err != nil {
+		logger.Fatal("Failed to load redis queue config", zap.Error(err))
+	}
+	redisQueue.Config = redisQueueConfig
 
 	var workersPerNode int
 	if _, err := fmt.Sscanf(*workersPerNodePtr, "%d", &workersPerNode); err != nil {
