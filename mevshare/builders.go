@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ybbus/jsonrpc/v3"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
@@ -143,8 +144,20 @@ type BuildersBackend struct {
 
 // SendBundle sends a bundle to all builders.
 // Bundles are sent to all builders in parallel.
-func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bundle *SendMevBundleArgs) { //nolint:gocognit
+func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bundle *SendMevBundleArgs, targetBlock uint64) { //nolint:gocognit
 	var wg sync.WaitGroup
+
+	// clean metadata, privacy, inclusion
+	args := *bundle
+	args.Inclusion.BlockNumber = hexutil.Uint64(targetBlock)
+	args.Inclusion.MaxBlock = hexutil.Uint64(targetBlock)
+	var builders []string
+	if args.Privacy != nil {
+		// it should already be cleaned while matching, but just in case we do it again here
+		MergePrivacyBuilders(&args)
+		builders = args.Privacy.Builders
+	}
+	cleanBundle(&args)
 
 	// always send to internal builders
 	internalBuildersSuccess := make([]bool, len(b.internalBuilders))
@@ -154,7 +167,7 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 			defer wg.Done()
 
 			start := time.Now()
-			err := builder.SendBundle(ctx, bundle)
+			err := builder.SendBundle(ctx, &args)
 			logger.Debug("Sent bundle to internal builder", zap.String("builder", builder.Name), zap.Duration("duration", time.Since(start)), zap.Error(err))
 
 			if err != nil {
@@ -165,14 +178,7 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 		}(builder, idx)
 	}
 
-	if bundle.Privacy != nil && len(bundle.Privacy.Builders) > 0 {
-		// clean metadata, privacy
-		args := *bundle
-		// it should already be cleaned while matching, but just in case we do it again here
-		MergePrivacyBuilders(&args)
-		builders := args.Privacy.Builders
-		cleanBundle(&args)
-
+	if len(builders) > 0 {
 		buildersUsed := make(map[string]struct{})
 		for _, target := range builders {
 			target = strings.ToLower(target)

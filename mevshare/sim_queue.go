@@ -141,7 +141,7 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 	}
 	if cancelled {
 		logger.Info("Bundle is not simulated because it was cancelled")
-		return nil
+		return simqueue.ErrProcessUnrecoverable
 	}
 
 	result, err := w.simulationBackend.SimulateBundle(ctx, &bundle, nil)
@@ -181,6 +181,10 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 			w.log.Error("Failed to consume matched share bundle", zap.Error(err))
 		}
 	}()
+
+	if !result.Success && !isErrorRecoverable(result.Error) {
+		return simqueue.ErrProcessUnrecoverable
+	}
 	return nil
 }
 

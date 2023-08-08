@@ -24,7 +24,6 @@ var (
 	ErrBackrunInclusion      = errors.New("backrun invalid inclusion")
 
 	ErrInternalServiceError = errors.New("mev-share service error")
-	ErrKnownBundle          = errors.New("bundle already known")
 
 	simBundleTimeout    = 500 * time.Millisecond
 	cancelBundleTimeout = 3 * time.Second
