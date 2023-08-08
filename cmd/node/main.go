@@ -142,6 +142,9 @@ func main() {
 	}
 	redisQueue.Config = redisQueueConfig
 
+	// keep track of cancelled bundles for a 30-block window
+	cancelCache := mevshare.NewRedisCancellationCache(redisClient, 30*12*time.Second, "node-cancel")
+
 	var workersPerNode int
 	if _, err := fmt.Sscanf(*workersPerNodePtr, "%d", &workersPerNode); err != nil {
 		logger.Fatal("Failed to parse workers per node", zap.Error(err))
@@ -150,7 +153,7 @@ func main() {
 		logger.Fatal("Workers per node must be greater than 0")
 	}
 	backgroundWg := &sync.WaitGroup{}
-	simQueue := mevshare.NewQueue(logger, redisQueue, ethBackend, simBackends, simResultBackend, workersPerNode, backgroundWg)
+	simQueue := mevshare.NewQueue(logger, redisQueue, ethBackend, simBackends, simResultBackend, workersPerNode, backgroundWg, cancelCache)
 	queueWg := simQueue.Start(ctx)
 	// chain id
 	chainID, err := ethBackend.ChainID(ctx)
@@ -166,7 +169,7 @@ func main() {
 
 	cachingEthBackend := mevshare.NewCachingEthClient(ethBackend)
 
-	api := mevshare.NewAPI(logger, simQueue, dbBackend, cachingEthBackend, signer, simBackends, rate.Limit(rateLimit), buildersBackend)
+	api := mevshare.NewAPI(logger, simQueue, dbBackend, cachingEthBackend, signer, simBackends, rate.Limit(rateLimit), buildersBackend, cancelCache)
 
 	jsonRPCServer, err := jsonrpcserver.NewHandler(jsonrpcserver.Methods{
 		"mev_sendBundle":         api.SendBundle,

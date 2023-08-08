@@ -55,10 +55,15 @@ type API struct {
 	simRateLimiter *rate.Limiter
 	builders       BuildersBackend
 
-	knownBundleCache *lru.Cache[common.Hash, struct{}]
+	knownBundleCache  *lru.Cache[common.Hash, struct{}]
+	cancellationCache *RedisCancellationCache
 }
 
-func NewAPI(log *zap.Logger, scheduler SimScheduler, bundleStorage BundleStorage, eth EthClient, signer types.Signer, simBackends []SimulationBackend, simRateLimit rate.Limit, builders BuildersBackend) *API {
+func NewAPI(
+	log *zap.Logger,
+	scheduler SimScheduler, bundleStorage BundleStorage, eth EthClient, signer types.Signer,
+	simBackends []SimulationBackend, simRateLimit rate.Limit, builders BuildersBackend, cancellationCache *RedisCancellationCache,
+) *API {
 	return &API{
 		log: log,
 
@@ -70,7 +75,8 @@ func NewAPI(log *zap.Logger, scheduler SimScheduler, bundleStorage BundleStorage
 		simRateLimiter: rate.NewLimiter(simRateLimit, 1),
 		builders:       builders,
 
-		knownBundleCache: lru.NewCache[common.Hash, struct{}](bundleCacheSize),
+		knownBundleCache:  lru.NewCache[common.Hash, struct{}](bundleCacheSize),
+		cancellationCache: cancellationCache,
 	}
 }
 
@@ -173,16 +179,23 @@ func (m *API) SimBundle(ctx context.Context, bundle SendMevBundleArgs, aux SimMe
 // This method is not exposed on the bundle relay.
 // However, it is used by the Flashbots bundle relay for now to handle the cancellation of private transactions.
 func (m *API) CancelBundleByHash(ctx context.Context, hash common.Hash) error {
+	logger := m.log.With(zap.String("bundle", hash.Hex()))
 	ctx, cancel := context.WithTimeout(ctx, cancelBundleTimeout)
 	defer cancel()
 	signerAddress := jsonrpcserver.GetSigner(ctx)
 	err := m.bundleStorage.CancelBundleByHash(ctx, hash, signerAddress)
 	if err != nil {
+		if !errors.Is(err, ErrBundleNotCancelled) {
+			logger.Warn("Failed to cancel bundle", zap.Error(err))
+		}
 		return ErrBundleNotCancelled
 	}
 
-	logger := m.log.With(zap.String("bundle", hash.Hex()))
-	m.builders.CancelBundleByHash(ctx, logger, hash)
+	err = m.cancellationCache.Add(ctx, hash)
+	if err != nil {
+		logger.Error("Failed to add bundle to cancellation cache", zap.Error(err))
+	}
+
 	logger.Info("Bundle cancelled")
 	return nil
 }

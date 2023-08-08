@@ -226,9 +226,6 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 }
 
 func (b *DBBackend) CancelBundleByHash(ctx context.Context, hash common.Hash, signer common.Address) error {
-	// TODO: improve
-	// this is very primitive bundle cancellation, we should also cancel all the bundles that are dependent on this one
-	// but for now while we have 1 level of dependencies, this is enough because builder will cancel all the bundles that are dependent on this one
 	var result []byte
 	err := b.cancelBundle.GetContext(ctx, &result, hash.Bytes(), signer.Bytes())
 	if err != nil {
