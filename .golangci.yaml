@@ -102,3 +102,4 @@ linters-settings:
       - 'Receipt'
       - 'types.Log'
       - 'MevBundleMetadata'
+      - 'MevBundleValidity'

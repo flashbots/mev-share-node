@@ -39,6 +39,7 @@ type DBSbundle struct {
 	Body               []byte         `db:"body"`
 	BodySize           int            `db:"body_size"`
 	OriginID           sql.NullString `db:"origin_id"`
+	InsertedAt         time.Time      `db:"inserted_at"`
 }
 
 var insertBundleQuery = `
@@ -54,7 +55,7 @@ ON CONFLICT (hash) DO NOTHING
 RETURNING hash`
 
 var selectSimDataBundleQueryForUpdate = `
-SELECT sim_all_sims_gas_used, sim_total_sim_count
+SELECT hash, sim_all_sims_gas_used, sim_total_sim_count
 FROM sbundle
 WHERE hash = $1
 FOR UPDATE`
@@ -87,12 +88,14 @@ ON CONFLICT (hash, idx) DO NOTHING`
 
 type DBSbundleBuilder struct {
 	Hash           []byte         `db:"hash"`
+	Cancelled      bool           `db:"cancelled"`
 	Block          int64          `db:"block"`
 	MaxBlock       int64          `db:"max_block"`
 	SimStateBlock  sql.NullInt64  `db:"sim_state_block"`
 	SimEffGasPrice sql.NullString `db:"sim_eff_gas_price"`
 	SimProfit      sql.NullString `db:"sim_profit"`
 	Body           []byte         `db:"body"`
+	InsertedAt     time.Time      `db:"inserted_at"`
 }
 
 var insertBundleBuilderQuery = `
@@ -251,7 +254,7 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 				storedBundle.SimTotalSimCount = sql.NullInt64{Int64: 1, Valid: true}
 			}
 			// 2. update bundle
-			_, err = dbTx.NamedExecContext(ctx, updateBundleSimQuery, storedBundle)
+			_, err := dbTx.NamedStmtContext(ctx, b.updateBundleSim).ExecContext(ctx, storedBundle)
 			if err != nil {
 				_ = dbTx.Rollback()
 				return known, err
@@ -290,6 +293,9 @@ func (b *DBBackend) CancelBundleByHash(ctx context.Context, hash common.Hash, si
 	var result []byte
 	err := b.cancelBundle.GetContext(ctx, &result, hash.Bytes(), signer.Bytes())
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrBundleNotCancelled
+		}
 		return err
 	}
 
@@ -337,4 +343,8 @@ func (b *DBBackend) InsertHistoricalHint(ctx context.Context, currentBlock uint6
 
 	_, err = b.insertHint.ExecContext(ctx, dbHint)
 	return err
+}
+
+func (b *DBBackend) Close() error {
+	return b.db.Close()
 }
