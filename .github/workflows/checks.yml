@@ -19,6 +19,9 @@ jobs:
       - name: Run Docker compose to spin up services
         run: docker compose up -d
 
+      - name: Wait for postgres to be ready
+        run: while ! pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done
+
       - name: Run migrations
         run: for file in sql/*.sql; do psql "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable" -f $file; done
 
