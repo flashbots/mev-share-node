@@ -34,12 +34,14 @@ type DBSbundle struct {
 	SimProfit          sql.NullString `db:"sim_profit"`
 	SimRefundableValue sql.NullString `db:"sim_refundable_value"`
 	SimGasUsed         sql.NullInt64  `db:"sim_gas_used"`
-	SimAllSimsGasUsed  sql.NullInt64  `db:"sim_all_sims_gas_used"`
-	SimTotalSimCount   sql.NullInt64  `db:"sim_total_sim_count"`
-	Body               []byte         `db:"body"`
-	BodySize           int            `db:"body_size"`
-	OriginID           sql.NullString `db:"origin_id"`
-	InsertedAt         time.Time      `db:"inserted_at"`
+	// sum of all simulations gas used
+	SimAllSimsGasUsed sql.NullInt64 `db:"sim_all_sims_gas_used"`
+	// number of simulations that were run for this bundle
+	SimTotalSimCount sql.NullInt64  `db:"sim_total_sim_count"`
+	Body             []byte         `db:"body"`
+	BodySize         int            `db:"body_size"`
+	OriginID         sql.NullString `db:"origin_id"`
+	InsertedAt       time.Time      `db:"inserted_at"`
 }
 
 var insertBundleQuery = `
@@ -191,6 +193,9 @@ func (b *DBBackend) GetBundle(ctx context.Context, hash common.Hash) (*SendMevBu
 	return &bundle, nil
 }
 
+// InsertBundleForStats inserts a bundle into the database.
+// When called for the second time for the known bundle, it will return known = true and update bundle simulation
+// results with the last inserted simulation results.
 func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) (known bool, err error) {
 	var dbBundle DBSbundle
 	if bundle.Metadata == nil {
@@ -305,6 +310,9 @@ func (b *DBBackend) CancelBundleByHash(ctx context.Context, hash common.Hash, si
 	return nil
 }
 
+// InsertBundleForBuilder inserts a bundle into the database for a builder to use
+// Target block is the block the bundle is trying to get in.
+// When it's called for the known bundle, we update the bundle with fresh simulation results and new target block.
 func (b *DBBackend) InsertBundleForBuilder(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse, targetBlock uint64) error {
 	var dbBundle DBSbundleBuilder
 	var err error
