@@ -15,7 +15,10 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var consumeSimulationTimeout = 5 * time.Second
+var (
+	consumeSimulationTimeout = 5 * time.Second
+	simCacheTimeout          = 1 * time.Second
+)
 
 type SimQueue struct {
 	log            *zap.Logger
@@ -25,7 +28,10 @@ type SimQueue struct {
 	workersPerNode int
 }
 
-func NewQueue(log *zap.Logger, queue simqueue.Queue, eth EthClient, sim []SimulationBackend, simRes SimulationResult, workersPerNode int, backgroundWg *sync.WaitGroup) *SimQueue {
+func NewQueue(
+	log *zap.Logger, queue simqueue.Queue, eth EthClient, sim []SimulationBackend, simRes SimulationResult,
+	workersPerNode int, backgroundWg *sync.WaitGroup, cancelCache *RedisCancellationCache,
+) *SimQueue {
 	log = log.Named("queue")
 	q := &SimQueue{
 		log:            log,
@@ -40,6 +46,7 @@ func NewQueue(log *zap.Logger, queue simqueue.Queue, eth EthClient, sim []Simula
 			log:               log.Named("worker").With(zap.Int("worker-id", i)),
 			simulationBackend: s,
 			simRes:            simRes,
+			cancelCache:       cancelCache,
 			backgroundWg:      backgroundWg,
 		}
 		q.workers = append(q.workers, worker)
@@ -108,6 +115,7 @@ type SimulationWorker struct {
 	log               *zap.Logger
 	simulationBackend SimulationBackend
 	simRes            SimulationResult
+	cancelCache       *RedisCancellationCache
 	backgroundWg      *sync.WaitGroup
 }
 
@@ -119,19 +127,31 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 		return err
 	}
 
-	result, err := w.simulationBackend.SimulateBundle(ctx, &bundle, nil)
-	if err != nil {
-		w.log.Error("Failed to simulate matched bundle", zap.Error(err))
-		// we want to retry after such error
-		return errors.Join(err, simqueue.ErrProcessWorkerError)
-	}
-
 	var hash common.Hash
 	if bundle.Metadata != nil {
 		hash = bundle.Metadata.BundleHash
 	}
-	w.log.Info("Simulated bundle",
-		zap.String("bundle", hash.Hex()),
+	logger := w.log.With(zap.String("bundle", hash.Hex()))
+
+	// Check if bundle was cancelled
+	cancelled, err := w.isBundleCancelled(ctx, &bundle)
+	if err != nil {
+		// We don't return error here,  because we would consider this error as non-critical as our cancellations are "best effort".
+		logger.Error("Failed to check if bundle was cancelled", zap.Error(err))
+	}
+	if cancelled {
+		logger.Info("Bundle is not simulated because it was cancelled")
+		return simqueue.ErrProcessUnrecoverable
+	}
+
+	result, err := w.simulationBackend.SimulateBundle(ctx, &bundle, nil)
+	if err != nil {
+		logger.Error("Failed to simulate matched bundle", zap.Error(err))
+		// we want to retry after such error
+		return errors.Join(err, simqueue.ErrProcessWorkerError)
+	}
+
+	logger.Info("Simulated bundle",
 		zap.Bool("success", result.Success), zap.String("err_reason", result.Error),
 		zap.String("gwei_eff_gas_price", formatUnits(result.MevGasPrice.ToInt(), "gwei")),
 		zap.String("eth_profit", formatUnits(result.Profit.ToInt(), "eth")),
@@ -161,7 +181,25 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 			w.log.Error("Failed to consume matched share bundle", zap.Error(err))
 		}
 	}()
+
+	if !result.Success && !isErrorRecoverable(result.Error) {
+		return simqueue.ErrProcessUnrecoverable
+	}
 	return nil
+}
+
+func (w *SimulationWorker) isBundleCancelled(ctx context.Context, bundle *SendMevBundleArgs) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, simCacheTimeout)
+	defer cancel()
+	if bundle.Metadata == nil {
+		w.log.Error("Bundle has no metadata, skipping cancel check")
+		return false, nil
+	}
+	res, err := w.cancelCache.IsCancelled(ctx, append([]common.Hash{bundle.Metadata.BundleHash}, bundle.Metadata.BodyHashes...))
+	if err != nil {
+		return false, err
+	}
+	return res, nil
 }
 
 func isErrorRecoverable(message string) bool {

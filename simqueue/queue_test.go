@@ -91,6 +91,8 @@ func TestRedisQueue(t *testing.T) {
 	r := newQueueRunner("test_queue")
 	worker := newTestWorker()
 
+	//
+
 	// test that queue can be cancelled
 	t.Run("empty queue cancel", func(t *testing.T) {
 		r.startProcessLoop(ctx, []ProcessFunc{worker.processOk})
@@ -215,7 +217,7 @@ func TestRedisQueue(t *testing.T) {
 	})
 
 	// test processing when processor returns error too many times
-	t.Run("test processing with error, unrecoverable", func(t *testing.T) {
+	t.Run("test processing with error, worker error", func(t *testing.T) {
 		r.queue.Config.MaxRetries = 2
 		defer func() {
 			r.queue.Config.MaxRetries = DefaultQueueConfig.MaxRetries
@@ -244,12 +246,94 @@ func TestRedisQueue(t *testing.T) {
 	})
 
 	// test rescheduling of the unprocessed items in the queue for the next block, but with too many retries
-	t.Run("test processing with rescheduling, unrecoverable", func(t *testing.T) {
-		testQueueReschedUnrecoverable(t, r, worker)
+	t.Run("test processing with rescheduling, error processing, too many retries", func(t *testing.T) {
+		testQueueReschedTooManyRetries(t, r, worker)
+	})
+
+	// test rescheduling of the processed items in the queue for the next block when block range is specified
+	t.Run("test reschedule when processing successful", func(t *testing.T) {
+		testQueueReschedOnSuccess(t, r, worker)
+	})
+
+	// test rescheduling of the processed items in the queue for the next block when item is not recoverable
+	t.Run("test reschedule when processing, unrecoverable item", func(t *testing.T) {
+		var (
+			callCount int
+			mu        sync.Mutex
+		)
+		processErr := func(ctx context.Context, data []byte, info QueueItemInfo) error {
+			mu.Lock()
+			defer mu.Unlock()
+			callCount++
+			return errors.Join(errors.New("item unrecoverable"), ErrProcessUnrecoverable) //nolint:goerr113
+		}
+
+		err := r.queue.UpdateBlock(21)
+		require.NoError(t, err)
+
+		r.startProcessLoop(ctx, []ProcessFunc{processErr})
+
+		err = r.queue.Push(ctx, []byte("test-item-unrecoverable"), false, 22, 25)
+		require.NoError(t, err)
+
+		// after 1 attempt, it should give up
+		for b := 22; b <= 25; b++ {
+			require.NoError(t, r.queue.UpdateBlock(uint64(b)))
+			time.Sleep(processTimeout)
+		}
+
+		require.Nil(t, worker.nextProcessed(processTimeout*5))
+		mu.Lock()
+		require.Equal(t, 1, callCount)
+		mu.Unlock()
+
+		r.stopProcessLoop()
 	})
 }
 
-func testQueueReschedUnrecoverable(t *testing.T, r queueRunner, worker *testWorker) {
+func testQueueReschedOnSuccess(t *testing.T, r queueRunner, worker *testWorker) {
+	t.Helper()
+	ctx := context.Background()
+	r.queue.Config.MaxRetries = 3
+	defer func() {
+		r.queue.Config.MaxRetries = DefaultQueueConfig.MaxRetries
+	}()
+
+	var (
+		callCount = 0
+		mu        sync.Mutex
+	)
+	processOk := func(ctx context.Context, data []byte, info QueueItemInfo) error {
+		mu.Lock()
+		defer mu.Unlock()
+		callCount++
+		return nil
+	}
+
+	err := r.queue.UpdateBlock(15)
+	require.NoError(t, err)
+
+	err = r.queue.Push(ctx, []byte("test-error-reschedule-success"), false, 15, 20)
+	require.NoError(t, err)
+
+	r.startProcessLoop(ctx, []ProcessFunc{processOk})
+
+	// after 3 successful attempts, it should give up
+	for b := 16; b <= 20; b++ {
+		require.NoError(t, r.queue.UpdateBlock(uint64(b)))
+		time.Sleep(processTimeout)
+	}
+
+	require.Nil(t, worker.nextProcessed(processTimeout))
+	// 3 successful attempts
+	mu.Lock()
+	require.Equal(t, 3, callCount)
+	mu.Unlock()
+
+	r.stopProcessLoop()
+}
+
+func testQueueReschedTooManyRetries(t *testing.T, r queueRunner, worker *testWorker) {
 	t.Helper()
 	ctx := context.Background()
 	r.queue.Config.MaxRetries = 3

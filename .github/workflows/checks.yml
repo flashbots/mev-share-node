@@ -16,9 +16,14 @@ jobs:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v3
 
-
       - name: Run Docker compose to spin up services
         run: docker compose up -d
+
+      - name: Wait for postgres to be ready
+        run: while ! pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done
+
+      - name: Run migrations
+        run: for file in sql/*.sql; do psql "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable" -f $file; done
 
       - name: Run unit tests and generate the coverage report
         run: make test-race

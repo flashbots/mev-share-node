@@ -2,7 +2,6 @@ package mevshare
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
@@ -19,8 +18,8 @@ type SimulationResult interface {
 }
 
 type Storage interface {
-	InsertBundleForStats(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) error
-	InsertBundleForBuilder(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) error
+	InsertBundleForStats(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) (known bool, err error)
+	InsertBundleForBuilder(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse, targetBlock uint64) error
 	InsertHistoricalHint(ctx context.Context, currentBlock uint64, hint *Hint) error
 }
 
@@ -68,21 +67,28 @@ func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
 	go func() {
 		defer wg.Done()
 		start := time.Now()
-		err := s.store.InsertBundleForStats(ctx, bundle, sim)
+		knownBundle, err := s.store.InsertBundleForStats(ctx, bundle, sim)
 		logger.Debug("Inserted bundle for stats", zap.Duration("duration", time.Since(start)), zap.Error(err))
 		if err != nil {
-			if errors.Is(err, ErrKnownBundle) {
-				logger.Debug("Bundle already known", zap.Error(err))
-				cancelCtx()
-				return
-			}
 			logger.Error("Failed to insert bundle for stats", zap.Error(err))
 		}
-		start = time.Now()
-		err = s.store.InsertBundleForBuilder(ctx, bundle, sim)
-		logger.Debug("Inserted bundle for builder", zap.Duration("duration", time.Since(start)), zap.Error(err))
-		if err != nil {
-			logger.Error("Failed to insert bundle for builder", zap.Error(err))
+
+		if sim.Success {
+			if !knownBundle {
+				start := time.Now()
+				err := s.ProcessHints(ctx, bundle, sim)
+				logger.Debug("Processed hints", zap.Duration("duration", time.Since(start)), zap.Error(err))
+				if err != nil {
+					logger.Error("Failed to process hints", zap.Error(err))
+				}
+			}
+
+			start = time.Now()
+			err = s.store.InsertBundleForBuilder(ctx, bundle, sim, uint64(sim.StateBlock)+1)
+			logger.Debug("Inserted bundle for builder", zap.Duration("duration", time.Since(start)), zap.Error(err))
+			if err != nil {
+				logger.Error("Failed to insert bundle for builder", zap.Error(err))
+			}
 		}
 	}()
 
@@ -91,17 +97,7 @@ func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			start := time.Now()
-			err := s.ProcessHints(ctx, bundle, sim)
-			logger.Debug("Processed hints", zap.Duration("duration", time.Since(start)), zap.Error(err))
-			if err != nil {
-				logger.Error("Failed to process hints", zap.Error(err))
-			}
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s.builders.SendBundle(ctx, logger, bundle)
+			s.builders.SendBundle(ctx, logger, bundle, uint64(sim.StateBlock)+1)
 		}()
 	}
 

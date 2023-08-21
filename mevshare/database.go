@@ -34,20 +34,40 @@ type DBSbundle struct {
 	SimProfit          sql.NullString `db:"sim_profit"`
 	SimRefundableValue sql.NullString `db:"sim_refundable_value"`
 	SimGasUsed         sql.NullInt64  `db:"sim_gas_used"`
-	Body               []byte         `db:"body"`
-	BodySize           int            `db:"body_size"`
-	OriginID           sql.NullString `db:"origin_id"`
+	// sum of all simulations gas used
+	SimAllSimsGasUsed sql.NullInt64 `db:"sim_all_sims_gas_used"`
+	// number of simulations that were run for this bundle
+	SimTotalSimCount sql.NullInt64  `db:"sim_total_sim_count"`
+	Body             []byte         `db:"body"`
+	BodySize         int            `db:"body_size"`
+	OriginID         sql.NullString `db:"origin_id"`
+	InsertedAt       time.Time      `db:"inserted_at"`
 }
 
 var insertBundleQuery = `
 INSERT INTO sbundle (hash, signer, cancelled, allow_matching, received_at, 
                      sim_success, sim_error, simulated_at, sim_eff_gas_price, sim_profit, sim_refundable_value, sim_gas_used,
+                     sim_all_sims_gas_used, sim_total_sim_count,
                      body, body_size, origin_id)
 VALUES (:hash, :signer, :cancelled, :allow_matching, :received_at, 
         :sim_success, :sim_error, :simulated_at, :sim_eff_gas_price, :sim_profit, :sim_refundable_value, :sim_gas_used,
+        :sim_all_sims_gas_used, :sim_total_sim_count,
         :body, :body_size, :origin_id)
 ON CONFLICT (hash) DO NOTHING
 RETURNING hash`
+
+var selectSimDataBundleQueryForUpdate = `
+SELECT hash, sim_all_sims_gas_used, sim_total_sim_count
+FROM sbundle
+WHERE hash = $1
+FOR UPDATE`
+
+var updateBundleSimQuery = `
+UPDATE sbundle
+SET sim_success = :sim_success, sim_error = :sim_error, simulated_at = :simulated_at, 
+    sim_eff_gas_price = :sim_eff_gas_price, sim_profit = :sim_profit, sim_refundable_value = :sim_refundable_value, 
+    sim_gas_used = :sim_gas_used, sim_all_sims_gas_used = :sim_all_sims_gas_used, sim_total_sim_count = :sim_total_sim_count
+WHERE hash = :hash`
 
 var getBundleQuery = `
 SELECT hash, body
@@ -70,18 +90,21 @@ ON CONFLICT (hash, idx) DO NOTHING`
 
 type DBSbundleBuilder struct {
 	Hash           []byte         `db:"hash"`
+	Cancelled      bool           `db:"cancelled"`
 	Block          int64          `db:"block"`
 	MaxBlock       int64          `db:"max_block"`
 	SimStateBlock  sql.NullInt64  `db:"sim_state_block"`
 	SimEffGasPrice sql.NullString `db:"sim_eff_gas_price"`
 	SimProfit      sql.NullString `db:"sim_profit"`
 	Body           []byte         `db:"body"`
+	InsertedAt     time.Time      `db:"inserted_at"`
 }
 
 var insertBundleBuilderQuery = `
 INSERT INTO sbundle_builder (hash, block, max_block, sim_state_block, sim_eff_gas_price, sim_profit, body)
 VALUES (:hash, :block, :max_block, :sim_state_block, :sim_eff_gas_price, :sim_profit, :body)
-ON conflict (hash) DO NOTHING`
+ON conflict (hash) DO 
+UPDATE SET block = :block, max_block = :max_block, sim_state_block = :sim_state_block, sim_eff_gas_price = :sim_eff_gas_price, sim_profit = :sim_profit, body = :body`
 
 var ErrBundleNotFound = errors.New("bundle not found")
 
@@ -105,6 +128,7 @@ type DBBackend struct {
 	insertBuilderBundle *sqlx.NamedStmt
 	cancelBundle        *sqlx.Stmt
 	insertHint          *sqlx.NamedStmt
+	updateBundleSim     *sqlx.NamedStmt
 }
 
 func NewDBBackend(postgresDSN string) (*DBBackend, error) {
@@ -136,6 +160,11 @@ func NewDBBackend(postgresDSN string) (*DBBackend, error) {
 		return nil, err
 	}
 
+	updateBundleSim, err := db.PrepareNamed(updateBundleSimQuery)
+	if err != nil {
+		return nil, err
+	}
+
 	return &DBBackend{
 		db:                  db,
 		insertBundle:        insertBundle,
@@ -143,6 +172,7 @@ func NewDBBackend(postgresDSN string) (*DBBackend, error) {
 		insertBuilderBundle: insertBuilderBundle,
 		cancelBundle:        cancelBundle,
 		insertHint:          insertHint,
+		updateBundleSim:     updateBundleSim,
 	}, nil
 }
 
@@ -163,11 +193,13 @@ func (b *DBBackend) GetBundle(ctx context.Context, hash common.Hash) (*SendMevBu
 	return &bundle, nil
 }
 
-func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) error {
+// InsertBundleForStats inserts a bundle into the database.
+// When called for the second time for the known bundle, it will return known = true and update bundle simulation
+// results with the last inserted simulation results.
+func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) (known bool, err error) {
 	var dbBundle DBSbundle
-	var err error
 	if bundle.Metadata == nil {
-		return ErrNilBundleMetadata
+		return known, ErrNilBundleMetadata
 	}
 	dbBundle.Hash = bundle.Metadata.BundleHash.Bytes()
 	dbBundle.Signer = bundle.Metadata.Signer.Bytes()
@@ -181,26 +213,63 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 	dbBundle.SimProfit = sql.NullString{String: dbIntToEth(&result.Profit), Valid: result.Success}
 	dbBundle.SimRefundableValue = sql.NullString{String: dbIntToEth(&result.RefundableValue), Valid: result.Success}
 	dbBundle.SimGasUsed = sql.NullInt64{Int64: int64(result.GasUsed), Valid: true}
+	dbBundle.SimAllSimsGasUsed = sql.NullInt64{Int64: int64(result.GasUsed), Valid: true}
+	dbBundle.SimTotalSimCount = sql.NullInt64{Int64: 1, Valid: true}
 	dbBundle.Body, err = json.Marshal(bundle)
 	if err != nil {
-		return err
+		return known, err
 	}
 	dbBundle.BodySize = len(bundle.Body)
 	dbBundle.OriginID = sql.NullString{String: bundle.Metadata.OriginID, Valid: bundle.Metadata.OriginID != ""}
 
 	dbTx, err := b.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return err
+		return known, err
 	}
 	// get hash from db
 	var hash []byte
 	err = dbTx.NamedStmtContext(ctx, b.insertBundle).GetContext(ctx, &hash, dbBundle)
 	if err != nil {
-		_ = dbTx.Rollback()
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrKnownBundle
+			// bundle is known so we update it with fresh simulation results
+			known = true
+			// 1. get bundle from db
+			var storedBundle DBSbundle
+			err = dbTx.GetContext(ctx, &storedBundle, selectSimDataBundleQueryForUpdate, dbBundle.Hash)
+
+			if err != nil {
+				_ = dbTx.Rollback()
+				return known, err
+			}
+			storedBundle.SimSuccess = result.Success
+			storedBundle.SimError = sql.NullString{String: result.Error, Valid: result.Error != ""}
+			storedBundle.SimulatedAt = sql.NullTime{Time: time.Now(), Valid: true}
+			storedBundle.SimEffGasPrice = sql.NullString{String: dbIntToEth(&result.MevGasPrice), Valid: result.Success}
+			storedBundle.SimProfit = sql.NullString{String: dbIntToEth(&result.Profit), Valid: result.Success}
+			storedBundle.SimRefundableValue = sql.NullString{String: dbIntToEth(&result.RefundableValue), Valid: result.Success}
+			storedBundle.SimGasUsed = sql.NullInt64{Int64: int64(result.GasUsed), Valid: true}
+			if storedBundle.SimTotalSimCount.Valid {
+				storedBundle.SimAllSimsGasUsed = sql.NullInt64{Int64: storedBundle.SimAllSimsGasUsed.Int64 + int64(result.GasUsed), Valid: true}
+			} else {
+				storedBundle.SimAllSimsGasUsed = sql.NullInt64{Int64: int64(result.GasUsed), Valid: true}
+			}
+			if storedBundle.SimTotalSimCount.Valid {
+				storedBundle.SimTotalSimCount = sql.NullInt64{Int64: storedBundle.SimTotalSimCount.Int64 + 1, Valid: true}
+			} else {
+				storedBundle.SimTotalSimCount = sql.NullInt64{Int64: 1, Valid: true}
+			}
+			// 2. update bundle
+			_, err := dbTx.NamedStmtContext(ctx, b.updateBundleSim).ExecContext(ctx, storedBundle)
+			if err != nil {
+				_ = dbTx.Rollback()
+				return known, err
+			}
+
+			_ = dbTx.Commit()
+			return known, nil
 		}
-		return err
+		_ = dbTx.Rollback()
+		return known, err
 	}
 
 	// insert body
@@ -220,18 +289,18 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 	_, err = dbTx.NamedExecContext(ctx, insertBundleBodyQuery, bodyElements)
 	if err != nil {
 		_ = dbTx.Rollback()
-		return err
+		return known, err
 	}
-	return dbTx.Commit()
+	return known, dbTx.Commit()
 }
 
 func (b *DBBackend) CancelBundleByHash(ctx context.Context, hash common.Hash, signer common.Address) error {
-	// TODO: improve
-	// this is very primitive bundle cancellation, we should also cancel all the bundles that are dependent on this one
-	// but for now while we have 1 level of dependencies, this is enough because builder will cancel all the bundles that are dependent on this one
 	var result []byte
 	err := b.cancelBundle.GetContext(ctx, &result, hash.Bytes(), signer.Bytes())
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrBundleNotCancelled
+		}
 		return err
 	}
 
@@ -241,15 +310,18 @@ func (b *DBBackend) CancelBundleByHash(ctx context.Context, hash common.Hash, si
 	return nil
 }
 
-func (b *DBBackend) InsertBundleForBuilder(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) error {
+// InsertBundleForBuilder inserts a bundle into the database for a builder to use
+// Target block is the block the bundle is trying to get in.
+// When it's called for the known bundle, we update the bundle with fresh simulation results and new target block.
+func (b *DBBackend) InsertBundleForBuilder(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse, targetBlock uint64) error {
 	var dbBundle DBSbundleBuilder
 	var err error
 	if bundle.Metadata == nil {
 		return ErrNilBundleMetadata
 	}
 	dbBundle.Hash = bundle.Metadata.BundleHash.Bytes()
-	dbBundle.Block = int64(bundle.Inclusion.BlockNumber)
-	dbBundle.MaxBlock = int64(bundle.Inclusion.MaxBlock)
+	dbBundle.Block = int64(targetBlock)
+	dbBundle.MaxBlock = int64(targetBlock)
 	dbBundle.SimStateBlock = sql.NullInt64{Int64: int64(result.StateBlock), Valid: result.Success}
 	dbBundle.SimEffGasPrice = sql.NullString{String: dbIntToEth(&result.MevGasPrice), Valid: result.Success}
 	dbBundle.SimProfit = sql.NullString{String: dbIntToEth(&result.Profit), Valid: result.Success}
@@ -279,4 +351,8 @@ func (b *DBBackend) InsertHistoricalHint(ctx context.Context, currentBlock uint6
 
 	_, err = b.insertHint.ExecContext(ctx, dbHint)
 	return err
+}
+
+func (b *DBBackend) Close() error {
+	return b.db.Close()
 }
