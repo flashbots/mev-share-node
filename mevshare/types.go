@@ -81,7 +81,7 @@ func (b *HintIntent) UnmarshalJSON(data []byte) error {
 			b.SetHint(HintCallData)
 		case "hash":
 			b.SetHint(HintHash)
-		case "special_logs":
+		case "special_logs", "default_logs":
 			b.SetHint(HintSpecialLogs)
 		case "tx_hash":
 			b.SetHint(HintTxHash)
