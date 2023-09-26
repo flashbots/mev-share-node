@@ -83,25 +83,27 @@ func TestDBBackend_InsertBundleForStats(t *testing.T) {
 		},
 	}
 
-	simResult1 := SimMevBundleResponse{
-		Success:         true,
-		Error:           "",
-		StateBlock:      5,
-		MevGasPrice:     hexutil.Big(*big.NewInt(5)),
-		Profit:          hexutil.Big(*big.NewInt(10)),
-		RefundableValue: hexutil.Big(*big.NewInt(7)),
-		GasUsed:         1700,
+	// sim 1, fail
+	simResult := SimMevBundleResponse{
+		Success:         false,
+		Error:           "error-3",
+		StateBlock:      3,
+		MevGasPrice:     hexutil.Big(*big.NewInt(0)),
+		Profit:          hexutil.Big(*big.NewInt(0)),
+		RefundableValue: hexutil.Big(*big.NewInt(0)),
+		GasUsed:         703,
 		BodyLogs:        nil,
 	}
+	var dbBundle DBSbundle
 
-	known, err := b.InsertBundleForStats(context.Background(), &bundle, &simResult1)
+	known, err := b.InsertBundleForStats(context.Background(), &bundle, &simResult)
 	require.NoError(t, err)
 	require.False(t, known)
 
-	var dbBundle DBSbundle
 	err = b.db.Get(&dbBundle, "SELECT * FROM sbundle WHERE hash = $1", bundleHash.Bytes())
 	require.NoError(t, err)
 
+	// bundle data
 	require.Equal(t, bundleHash.Bytes(), dbBundle.Hash)
 	require.Equal(t, signer.Bytes(), dbBundle.Signer)
 	require.False(t, dbBundle.Cancelled)
@@ -110,6 +112,70 @@ func TestDBBackend_InsertBundleForStats(t *testing.T) {
 	require.Equal(t, 1, dbBundle.BodySize)
 	require.Equal(t, "test-origin", dbBundle.OriginID.String)
 	// sim results
+	require.Equal(t, false, dbBundle.SimSuccess)
+	require.True(t, dbBundle.SimError.Valid)
+	require.Equal(t, "error-3", dbBundle.SimError.String)
+	require.False(t, dbBundle.SimEffGasPrice.Valid)
+	require.False(t, dbBundle.SimProfit.Valid)
+	require.False(t, dbBundle.SimRefundableValue.Valid)
+	require.True(t, dbBundle.SimGasUsed.Valid)
+	require.Equal(t, int64(703), dbBundle.SimGasUsed.Int64)
+	require.True(t, dbBundle.SimAllSimsGasUsed.Valid)
+	require.Equal(t, int64(703), dbBundle.SimAllSimsGasUsed.Int64)
+	require.True(t, dbBundle.SimTotalSimCount.Valid)
+	require.Equal(t, int64(1), dbBundle.SimTotalSimCount.Int64)
+
+	// sim 2, fail - db sim should be updated
+	simResult = SimMevBundleResponse{
+		Success:         false,
+		Error:           "error-4",
+		StateBlock:      4,
+		MevGasPrice:     hexutil.Big(*big.NewInt(0)),
+		Profit:          hexutil.Big(*big.NewInt(0)),
+		RefundableValue: hexutil.Big(*big.NewInt(0)),
+		GasUsed:         704,
+		BodyLogs:        nil,
+	}
+
+	known, err = b.InsertBundleForStats(context.Background(), &bundle, &simResult)
+	require.NoError(t, err)
+	require.True(t, known)
+	err = b.db.Get(&dbBundle, "SELECT * FROM sbundle WHERE hash = $1", bundleHash.Bytes())
+	require.NoError(t, err)
+
+	// sim results
+	require.Equal(t, false, dbBundle.SimSuccess)
+	require.True(t, dbBundle.SimError.Valid)
+	require.Equal(t, "error-4", dbBundle.SimError.String)
+	require.False(t, dbBundle.SimEffGasPrice.Valid)
+	require.False(t, dbBundle.SimProfit.Valid)
+	require.False(t, dbBundle.SimRefundableValue.Valid)
+	require.True(t, dbBundle.SimGasUsed.Valid)
+	require.Equal(t, int64(704), dbBundle.SimGasUsed.Int64)
+	require.True(t, dbBundle.SimAllSimsGasUsed.Valid)
+	require.Equal(t, int64(703+704), dbBundle.SimAllSimsGasUsed.Int64)
+	require.True(t, dbBundle.SimTotalSimCount.Valid)
+	require.Equal(t, int64(2), dbBundle.SimTotalSimCount.Int64)
+
+	// sim 3, ok - db sim should be updated
+	simResult = SimMevBundleResponse{
+		Success:         true,
+		Error:           "",
+		StateBlock:      5,
+		MevGasPrice:     hexutil.Big(*big.NewInt(5)),
+		Profit:          hexutil.Big(*big.NewInt(5 * 2)),
+		RefundableValue: hexutil.Big(*big.NewInt(5 * 3)),
+		GasUsed:         1705,
+		BodyLogs:        nil,
+	}
+
+	known, err = b.InsertBundleForStats(context.Background(), &bundle, &simResult)
+	require.NoError(t, err)
+	require.True(t, known)
+	err = b.db.Get(&dbBundle, "SELECT * FROM sbundle WHERE hash = $1", bundleHash.Bytes())
+	require.NoError(t, err)
+
+	// sim results
 	require.Equal(t, true, dbBundle.SimSuccess)
 	require.False(t, dbBundle.SimError.Valid)
 	require.True(t, dbBundle.SimEffGasPrice.Valid)
@@ -117,46 +183,79 @@ func TestDBBackend_InsertBundleForStats(t *testing.T) {
 	require.True(t, dbBundle.SimProfit.Valid)
 	require.Equal(t, "0.000000000000000010", dbBundle.SimProfit.String)
 	require.True(t, dbBundle.SimRefundableValue.Valid)
-	require.Equal(t, "0.000000000000000007", dbBundle.SimRefundableValue.String)
+	require.Equal(t, "0.000000000000000015", dbBundle.SimRefundableValue.String)
 	require.True(t, dbBundle.SimGasUsed.Valid)
-	require.Equal(t, int64(1700), dbBundle.SimGasUsed.Int64)
+	require.Equal(t, int64(1705), dbBundle.SimGasUsed.Int64)
 	require.True(t, dbBundle.SimAllSimsGasUsed.Valid)
-	require.Equal(t, int64(1700), dbBundle.SimAllSimsGasUsed.Int64)
+	require.Equal(t, int64(703+704+1705), dbBundle.SimAllSimsGasUsed.Int64)
 	require.True(t, dbBundle.SimTotalSimCount.Valid)
-	require.Equal(t, int64(1), dbBundle.SimTotalSimCount.Int64)
+	require.Equal(t, int64(3), dbBundle.SimTotalSimCount.Int64)
 
-	simResult2 := SimMevBundleResponse{
-		Success:         false,
-		Error:           "error",
+	// sim 4, ok - db sim should be updated
+	simResult = SimMevBundleResponse{
+		Success:         true,
+		Error:           "",
 		StateBlock:      6,
-		MevGasPrice:     hexutil.Big(*big.NewInt(0)),
-		Profit:          hexutil.Big(*big.NewInt(0)),
-		RefundableValue: hexutil.Big(*big.NewInt(0)),
-		GasUsed:         700,
+		MevGasPrice:     hexutil.Big(*big.NewInt(6)),
+		Profit:          hexutil.Big(*big.NewInt(6 * 2)),
+		RefundableValue: hexutil.Big(*big.NewInt(6 * 3)),
+		GasUsed:         1706,
 		BodyLogs:        nil,
 	}
 
-	known, err = b.InsertBundleForStats(context.Background(), &bundle, &simResult2)
+	known, err = b.InsertBundleForStats(context.Background(), &bundle, &simResult)
 	require.NoError(t, err)
 	require.True(t, known)
-
-	var dbBundle2 DBSbundle
-	err = b.db.Get(&dbBundle2, "SELECT * FROM sbundle WHERE hash = $1", bundleHash.Bytes())
+	err = b.db.Get(&dbBundle, "SELECT * FROM sbundle WHERE hash = $1", bundleHash.Bytes())
 	require.NoError(t, err)
-
 	// sim results
-	require.Equal(t, false, dbBundle2.SimSuccess)
-	require.True(t, dbBundle2.SimError.Valid)
-	require.Equal(t, "error", dbBundle2.SimError.String)
-	require.False(t, dbBundle2.SimEffGasPrice.Valid)
-	require.False(t, dbBundle2.SimProfit.Valid)
-	require.False(t, dbBundle2.SimRefundableValue.Valid)
-	require.True(t, dbBundle2.SimGasUsed.Valid)
-	require.Equal(t, int64(700), dbBundle2.SimGasUsed.Int64)
-	require.True(t, dbBundle2.SimAllSimsGasUsed.Valid)
-	require.Equal(t, int64(1700+700), dbBundle2.SimAllSimsGasUsed.Int64)
-	require.True(t, dbBundle2.SimTotalSimCount.Valid)
-	require.Equal(t, int64(2), dbBundle2.SimTotalSimCount.Int64)
+	require.Equal(t, true, dbBundle.SimSuccess)
+	require.False(t, dbBundle.SimError.Valid)
+	require.True(t, dbBundle.SimEffGasPrice.Valid)
+	require.Equal(t, "0.000000000000000006", dbBundle.SimEffGasPrice.String)
+	require.True(t, dbBundle.SimProfit.Valid)
+	require.Equal(t, "0.000000000000000012", dbBundle.SimProfit.String)
+	require.True(t, dbBundle.SimRefundableValue.Valid)
+	require.Equal(t, "0.000000000000000018", dbBundle.SimRefundableValue.String)
+	require.True(t, dbBundle.SimGasUsed.Valid)
+	require.Equal(t, int64(1706), dbBundle.SimGasUsed.Int64)
+	require.True(t, dbBundle.SimAllSimsGasUsed.Valid)
+	require.Equal(t, int64(703+704+1705+1706), dbBundle.SimAllSimsGasUsed.Int64)
+	require.True(t, dbBundle.SimTotalSimCount.Valid)
+	require.Equal(t, int64(4), dbBundle.SimTotalSimCount.Int64)
+
+	// sim 5, fail - db sim should not be updated
+	simResult = SimMevBundleResponse{
+		Success:         false,
+		Error:           "error-7",
+		StateBlock:      7,
+		MevGasPrice:     hexutil.Big(*big.NewInt(7)),
+		Profit:          hexutil.Big(*big.NewInt(7 * 2)),
+		RefundableValue: hexutil.Big(*big.NewInt(7 * 3)),
+		GasUsed:         1707,
+		BodyLogs:        nil,
+	}
+
+	known, err = b.InsertBundleForStats(context.Background(), &bundle, &simResult)
+	require.NoError(t, err)
+	require.True(t, known)
+	err = b.db.Get(&dbBundle, "SELECT * FROM sbundle WHERE hash = $1", bundleHash.Bytes())
+	require.NoError(t, err)
+	// sim results
+	require.Equal(t, true, dbBundle.SimSuccess)
+	require.False(t, dbBundle.SimError.Valid)
+	require.True(t, dbBundle.SimEffGasPrice.Valid)
+	require.Equal(t, "0.000000000000000006", dbBundle.SimEffGasPrice.String)
+	require.True(t, dbBundle.SimProfit.Valid)
+	require.Equal(t, "0.000000000000000012", dbBundle.SimProfit.String)
+	require.True(t, dbBundle.SimRefundableValue.Valid)
+	require.Equal(t, "0.000000000000000018", dbBundle.SimRefundableValue.String)
+	require.True(t, dbBundle.SimGasUsed.Valid)
+	require.Equal(t, int64(1706), dbBundle.SimGasUsed.Int64)
+	require.True(t, dbBundle.SimAllSimsGasUsed.Valid)
+	require.Equal(t, int64(703+704+1705+1706+1707), dbBundle.SimAllSimsGasUsed.Int64)
+	require.True(t, dbBundle.SimTotalSimCount.Valid)
+	require.Equal(t, int64(5), dbBundle.SimTotalSimCount.Int64)
 }
 
 func TestDBBackend_CancelBundleByHash(t *testing.T) {
