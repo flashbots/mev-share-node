@@ -13,7 +13,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var processTimeout = 10 * time.Millisecond
+var processTimeout = 50 * time.Millisecond
 
 type queueRunner struct {
 	queue  *RedisQueue

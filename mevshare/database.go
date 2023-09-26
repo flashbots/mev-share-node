@@ -57,7 +57,7 @@ ON CONFLICT (hash) DO NOTHING
 RETURNING hash`
 
 var selectSimDataBundleQueryForUpdate = `
-SELECT hash, sim_all_sims_gas_used, sim_total_sim_count
+SELECT hash, sim_success, sim_error, simulated_at, sim_eff_gas_price, sim_profit, sim_refundable_value, sim_gas_used, sim_all_sims_gas_used, sim_total_sim_count
 FROM sbundle
 WHERE hash = $1
 FOR UPDATE`
@@ -196,7 +196,7 @@ func (b *DBBackend) GetBundle(ctx context.Context, hash common.Hash) (*SendMevBu
 // InsertBundleForStats inserts a bundle into the database.
 // When called for the second time for the known bundle, it will return known = true and update bundle simulation
 // results with the last inserted simulation results.
-func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) (known bool, err error) {
+func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBundleArgs, result *SimMevBundleResponse) (known bool, err error) { //nolint:gocognit
 	var dbBundle DBSbundle
 	if bundle.Metadata == nil {
 		return known, ErrNilBundleMetadata
@@ -241,13 +241,24 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 				_ = dbTx.Rollback()
 				return known, err
 			}
-			storedBundle.SimSuccess = result.Success
-			storedBundle.SimError = sql.NullString{String: result.Error, Valid: result.Error != ""}
-			storedBundle.SimulatedAt = sql.NullTime{Time: time.Now(), Valid: true}
-			storedBundle.SimEffGasPrice = sql.NullString{String: dbIntToEth(&result.MevGasPrice), Valid: result.Success}
-			storedBundle.SimProfit = sql.NullString{String: dbIntToEth(&result.Profit), Valid: result.Success}
-			storedBundle.SimRefundableValue = sql.NullString{String: dbIntToEth(&result.RefundableValue), Valid: result.Success}
-			storedBundle.SimGasUsed = sql.NullInt64{Int64: int64(result.GasUsed), Valid: true}
+
+			var shouldUpdateSim bool
+			if storedBundle.SimSuccess {
+				shouldUpdateSim = result.Success
+			} else {
+				shouldUpdateSim = true
+			}
+
+			if shouldUpdateSim {
+				storedBundle.SimSuccess = result.Success
+				storedBundle.SimError = sql.NullString{String: result.Error, Valid: result.Error != ""}
+				storedBundle.SimulatedAt = sql.NullTime{Time: time.Now(), Valid: true}
+				storedBundle.SimEffGasPrice = sql.NullString{String: dbIntToEth(&result.MevGasPrice), Valid: result.Success}
+				storedBundle.SimProfit = sql.NullString{String: dbIntToEth(&result.Profit), Valid: result.Success}
+				storedBundle.SimRefundableValue = sql.NullString{String: dbIntToEth(&result.RefundableValue), Valid: result.Success}
+				storedBundle.SimGasUsed = sql.NullInt64{Int64: int64(result.GasUsed), Valid: true}
+			}
+
 			if storedBundle.SimTotalSimCount.Valid {
 				storedBundle.SimAllSimsGasUsed = sql.NullInt64{Int64: storedBundle.SimAllSimsGasUsed.Int64 + int64(result.GasUsed), Valid: true}
 			} else {
