@@ -64,10 +64,8 @@ func izZeroPriorityFeeTX(bundle *SendMevBundleArgs) bool {
 	if err != nil {
 		return false // incorrect bundle
 	}
-	if tx.GasTipCap().Cmp(big.NewInt(0)) == 0 {
-		return true
-	}
-	return false
+
+	return tx.GasTipCap().Cmp(big.NewInt(0)) == 0
 }
 
 // SimulatedBundle is called when simulation is done
@@ -117,13 +115,13 @@ func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
 		}
 	}()
 
-	//check bundle mev priority fee
+	// check bundle mev priority fee
 	isZeroFee := izZeroPriorityFeeTX(bundle)
 	if isZeroFee {
 		logger.Debug("Bundle has zero priority fee, skipping builder")
 	}
 
-	// failed bundle does not go to the builder and does not go to the hint backend
+	// failed bundles are not sent to builders, we also don't send single-tx bundles with zero priority fee
 	if sim.Success && !isZeroFee {
 		wg.Add(1)
 		go func() {
