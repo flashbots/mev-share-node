@@ -2,10 +2,12 @@ package mevshare
 
 import (
 	"context"
+	"math/big"
 	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/flashbots/mev-share-node/simqueue"
 	"go.uber.org/zap"
@@ -43,6 +45,27 @@ func NewSimulationResultBackend(log *zap.Logger, hint HintBackend, builders Buil
 		shareGasUsed:     shareGasUsed,
 		shareMevGasPrice: shareMevGasPrice,
 	}
+}
+
+func izZeroPriorityFeeTX(bundle *SendMevBundleArgs) bool {
+	if len(bundle.Body) != 1 {
+		return false // not a single tx bundle
+	}
+	if bundle.Body[0].Bundle != nil {
+		return false // bundle, not a single tx bundle
+	}
+	var tx types.Transaction
+	btx := bundle.Body[0]
+	if btx.Tx == nil {
+		return false // incorrect bundle
+	}
+
+	err := tx.UnmarshalBinary(*btx.Tx)
+	if err != nil {
+		return false // incorrect bundle
+	}
+
+	return tx.GasTipCap().Cmp(big.NewInt(0)) == 0
 }
 
 // SimulatedBundle is called when simulation is done
@@ -92,8 +115,14 @@ func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
 		}
 	}()
 
-	// failed bundle does not go to the builder and does not go to the hint backend
-	if sim.Success {
+	// check bundle mev priority fee
+	isZeroFee := izZeroPriorityFeeTX(bundle)
+	if isZeroFee {
+		logger.Debug("Bundle has zero priority fee, skipping builder")
+	}
+
+	// failed bundles are not sent to builders, we also don't send single-tx bundles with zero priority fee
+	if sim.Success && !isZeroFee {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
