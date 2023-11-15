@@ -2,6 +2,7 @@ package mevshare
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -197,6 +198,10 @@ func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint
 		}
 		if r := bundle.Privacy.WantRefund; r != nil && (*r < 0 || *r > 100) {
 			return hash, txs, unmatched, ErrInvalidBundlePrivacy
+		}
+		// make builders lowercase
+		for i, b := range bundle.Privacy.Builders {
+			bundle.Privacy.Builders[i] = strings.ToLower(b)
 		}
 	}
 
