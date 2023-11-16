@@ -29,8 +29,8 @@ func TestIntersect(t *testing.T) {
 		{
 			name: "intersection",
 			args: args{
-				a: []string{"a", "b", "c"},
-				b: []string{"b", "c", "d"},
+				a: []string{"a", "B", "c"},
+				b: []string{"B", "C", "d"},
 			},
 			want: []string{"b", "c"},
 		},

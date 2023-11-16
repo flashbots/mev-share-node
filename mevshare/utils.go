@@ -3,6 +3,7 @@ package mevshare
 import (
 	"context"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,10 +76,12 @@ func Intersect(a, b []string) []string {
 	}
 	m := make(map[string]bool)
 	for _, v := range a {
+		v = strings.ToLower(v)
 		m[v] = true
 	}
 	ret := []string{}
 	for _, v := range b {
+		v = strings.ToLower(v)
 		if m[v] {
 			ret = append(ret, v)
 		}
