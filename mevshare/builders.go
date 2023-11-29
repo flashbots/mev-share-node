@@ -73,7 +73,12 @@ func LoadBuilderConfig(file string) (BuildersBackend, error) {
 			return BuildersBackend{}, err
 		}
 
-		cl := jsonrpc.NewClientWithOpts(builder.URL, &jsonrpc.RPCClientOpts{CustomHeaders: map[string]string{orderflowHeader: flashbotsSource}})
+		cl := jsonrpc.NewClientWithOpts(builder.URL, &jsonrpc.RPCClientOpts{
+			HTTPClient:         nil,
+			CustomHeaders:      map[string]string{orderflowHeader: flashbotsSource},
+			AllowUnknownFields: false,
+			DefaultRequestID:   0,
+		})
 		builderBackend := JSONRPCBuilderBackend{
 			Name:   strings.ToLower(builder.Name),
 			Client: cl,
