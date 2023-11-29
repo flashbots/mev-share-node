@@ -22,6 +22,9 @@ type BuilderAPI uint8
 const (
 	BuilderAPIRefundRecipient BuilderAPI = iota
 	BuilderAPIMevShareBeta1
+
+	orderflowHeader = "x-orderflow-origin"
+	flashbotsSource = "flashbots"
 )
 
 func parseBuilderAPI(api string) (BuilderAPI, error) {
@@ -70,9 +73,10 @@ func LoadBuilderConfig(file string) (BuildersBackend, error) {
 			return BuildersBackend{}, err
 		}
 
+		cl := jsonrpc.NewClientWithOpts(builder.URL, &jsonrpc.RPCClientOpts{CustomHeaders: map[string]string{orderflowHeader: flashbotsSource}})
 		builderBackend := JSONRPCBuilderBackend{
 			Name:   strings.ToLower(builder.Name),
-			Client: jsonrpc.NewClient(builder.URL),
+			Client: cl,
 			API:    api,
 		}
 
