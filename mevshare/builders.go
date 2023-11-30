@@ -22,6 +22,8 @@ type BuilderAPI uint8
 const (
 	BuilderAPIRefundRecipient BuilderAPI = iota
 	BuilderAPIMevShareBeta1
+
+	OrderflowHeaderName = "x-orderflow-origin"
 )
 
 func parseBuilderAPI(api string) (BuilderAPI, error) {
@@ -43,6 +45,8 @@ type BuildersConfig struct {
 		Internal bool   `yaml:"internal,omitempty"`
 		Disabled bool   `yaml:"disabled,omitempty"`
 	} `yaml:"builders"`
+	OrderflowHeader      bool   `yaml:"orderflowHeader,omitempty"`
+	OrderflowHeaderValue string `yaml:"orderflowHeaderValue,omitempty"`
 }
 
 // LoadBuilderConfig parses a builder config from a file
@@ -58,6 +62,11 @@ func LoadBuilderConfig(file string) (BuildersBackend, error) {
 		return BuildersBackend{}, err
 	}
 
+	customHeaders := make(map[string]string)
+	if config.OrderflowHeader {
+		customHeaders[OrderflowHeaderName] = config.OrderflowHeaderValue
+	}
+
 	externalBuilders := make([]JSONRPCBuilderBackend, 0)
 	internalBuilders := make([]JSONRPCBuilderBackend, 0)
 	for _, builder := range config.Builders {
@@ -70,9 +79,15 @@ func LoadBuilderConfig(file string) (BuildersBackend, error) {
 			return BuildersBackend{}, err
 		}
 
+		cl := jsonrpc.NewClientWithOpts(builder.URL, &jsonrpc.RPCClientOpts{
+			HTTPClient:         nil,
+			CustomHeaders:      customHeaders,
+			AllowUnknownFields: false,
+			DefaultRequestID:   0,
+		})
 		builderBackend := JSONRPCBuilderBackend{
 			Name:   strings.ToLower(builder.Name),
-			Client: jsonrpc.NewClient(builder.URL),
+			Client: cl,
 			API:    api,
 		}
 
