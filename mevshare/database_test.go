@@ -26,14 +26,14 @@ func TestDBBackend_GetBundle(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get bundle that doesn't exist
-	_, err = b.GetBundle(context.Background(), hash)
+	_, err = b.GetBundleByPublicHash(context.Background(), hash)
 	require.ErrorIs(t, err, ErrBundleNotFound)
 
 	// Insert a bundle, that allow matching
 	_, err = b.db.Exec("INSERT INTO sbundle (hash, body, signer, body_size, allow_matching) VALUES ($1, $2, $3, $4, $5)",
 		hash.Bytes(), []byte("{}"), []byte{1}, 1, true)
 	require.NoError(t, err)
-	_, err = b.GetBundle(context.Background(), hash)
+	_, err = b.GetBundleByPublicHash(context.Background(), hash)
 	require.NoError(t, err)
 
 	// update allow matching to false
@@ -41,7 +41,7 @@ func TestDBBackend_GetBundle(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get bundle that exists, but doesn't allow matching
-	_, err = b.GetBundle(context.Background(), hash)
+	_, err = b.GetBundleByPublicHash(context.Background(), hash)
 	require.ErrorIs(t, err, ErrBundleNotFound)
 }
 

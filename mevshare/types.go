@@ -155,6 +155,8 @@ type MevBundleMetadata struct {
 	Signer     common.Address `json:"signer,omitempty"`
 	OriginID   string         `json:"originId,omitempty"`
 	ReceivedAt hexutil.Uint64 `json:"receivedAt,omitempty"`
+	PublicHash common.Hash    `json:"publicHash,omitempty"`
+	Prematched bool           `json:"prematched,omitempty"`
 }
 
 type SendMevBundleResponse struct {

@@ -210,6 +210,10 @@ func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint
 	bundle.Metadata = &MevBundleMetadata{}
 	bundle.Metadata.BundleHash = hash
 	bundle.Metadata.BodyHashes = bodyHashes
+	publicHasher := sha3.NewLegacyKeccak256()
+	publicHasher.Write(hash[:])
+	publicHash := common.BytesToHash(publicHasher.Sum(nil))
+	bundle.Metadata.PublicHash = publicHash
 
 	return hash, txs, unmatched, nil
 }
