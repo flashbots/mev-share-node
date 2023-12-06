@@ -178,7 +178,7 @@ func NewDBBackend(postgresDSN string) (*DBBackend, error) {
 	}, nil
 }
 
-func (b *DBBackend) GetBundleByPublicHash(ctx context.Context, hash common.Hash) (*SendMevBundleArgs, error) {
+func (b *DBBackend) GetBundleByMatchingHash(ctx context.Context, hash common.Hash) (*SendMevBundleArgs, error) {
 	var dbSbundle DBSbundle
 	err := b.getBundle.GetContext(ctx, &dbSbundle, hash.Bytes())
 	if errors.Is(err, sql.ErrNoRows) {
@@ -204,7 +204,7 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 		return known, ErrNilBundleMetadata
 	}
 	dbBundle.Hash = bundle.Metadata.BundleHash.Bytes()
-	dbBundle.MatchingHash = bundle.Metadata.PublicHash.Bytes()
+	dbBundle.MatchingHash = bundle.Metadata.MatchingHash.Bytes()
 	dbBundle.Signer = bundle.Metadata.Signer.Bytes()
 	dbBundle.AllowMatching = bundle.Privacy != nil && bundle.Privacy.Hints.HasHint(HintHash)
 	dbBundle.Prematched = bundle.Metadata.Prematched

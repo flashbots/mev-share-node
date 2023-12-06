@@ -150,13 +150,13 @@ type MevBundlePrivacy struct {
 }
 
 type MevBundleMetadata struct {
-	BundleHash common.Hash    `json:"bundleHash,omitempty"`
-	BodyHashes []common.Hash  `json:"bodyHashes,omitempty"`
-	Signer     common.Address `json:"signer,omitempty"`
-	OriginID   string         `json:"originId,omitempty"`
-	ReceivedAt hexutil.Uint64 `json:"receivedAt,omitempty"`
-	PublicHash common.Hash    `json:"publicHash,omitempty"`
-	Prematched bool           `json:"prematched,omitempty"`
+	BundleHash   common.Hash    `json:"bundleHash,omitempty"`
+	BodyHashes   []common.Hash  `json:"bodyHashes,omitempty"`
+	Signer       common.Address `json:"signer,omitempty"`
+	OriginID     string         `json:"originId,omitempty"`
+	ReceivedAt   hexutil.Uint64 `json:"receivedAt,omitempty"`
+	MatchingHash common.Hash    `json:"matchingHash,omitempty"`
+	Prematched   bool           `json:"prematched,omitempty"`
 }
 
 type SendMevBundleResponse struct {

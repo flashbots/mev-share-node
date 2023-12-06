@@ -35,7 +35,7 @@ type SimScheduler interface {
 }
 
 type BundleStorage interface {
-	GetBundleByPublicHash(ctx context.Context, hash common.Hash) (*SendMevBundleArgs, error)
+	GetBundleByMatchingHash(ctx context.Context, hash common.Hash) (*SendMevBundleArgs, error)
 	CancelBundleByHash(ctx context.Context, hash common.Hash, signer common.Address) error
 }
 
@@ -117,7 +117,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 			return SendMevBundleResponse{}, ErrInternalServiceError
 		}
 
-		unmatchedBundle, err := m.bundleStorage.GetBundleByPublicHash(ctx, unmatchedHash)
+		unmatchedBundle, err := m.bundleStorage.GetBundleByMatchingHash(ctx, unmatchedHash)
 		if err != nil {
 			return SendMevBundleResponse{}, ErrBackrunNotFound
 		}
