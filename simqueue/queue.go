@@ -70,6 +70,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/flashbots/mev-share-node/metrics"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -171,6 +172,8 @@ func (s *RedisQueue) Push(ctx context.Context, data []byte, highPriority bool, m
 	currentBlock := atomic.LoadUint64(s.currentBlock)
 
 	if maxTargetBlock <= currentBlock {
+		// here track stale item metrics
+		metrics.IncSbundlesReceivedStale()
 		s.log.Debug("max target block is less than current block, skipping", zap.Uint64("max_target_block", maxTargetBlock), zap.Uint64("current_block", currentBlock))
 		return ErrStaleItem
 	}
@@ -190,6 +193,10 @@ func (s *RedisQueue) Push(ctx context.Context, data []byte, highPriority bool, m
 	}
 	err := s.pushToQueue(ctx, args)
 	if err != nil {
+		if errors.Is(err, ErrQueueFull) {
+			metrics.IncQueueFullSbundles()
+		}
+		//here track metrics for quee full
 		return err
 	}
 	s.log.Debug("pushed to queue", zap.Uint64("min_target_block", minTargetBlock), zap.Uint64("max_target_block", maxTargetBlock), zap.Bool("high_priority", highPriority))
@@ -311,6 +318,7 @@ func (s *RedisQueue) processNextItem(ctx context.Context, process ProcessFunc) e
 	// stale item, skip or requeue for the next block
 	if nextBlock > args.minTargetBlock {
 		if nextBlock > args.maxTargetBlock {
+			metrics.IncQueuePopStaleItemSbundles()
 			s.log.Debug("skipping stale item",
 				zap.Uint64("next_block", nextBlock),
 				zap.Uint16("iterations", args.iteration),

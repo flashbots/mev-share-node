@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/VictoriaMetrics/metrics"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/flashbots/go-utils/cli"
@@ -36,6 +37,7 @@ var (
 	defaultLogProd               = os.Getenv("LOG_PROD") == "1"
 	defaultLogService            = os.Getenv("LOG_SERVICE")
 	defaultPort                  = cli.GetEnv("PORT", "8080")
+	defaultMetricsPort           = cli.GetEnv("METRICS_PORT", "8088")
 	defaultChannelName           = cli.GetEnv("REDIS_CHANNEL_NAME", "hints")
 	defaultRedisEndpoint         = cli.GetEnv("REDIS_ENDPOINT", "redis://localhost:6379")
 	defaultSimulationsEndpoint   = cli.GetEnv("SIMULATION_ENDPOINTS", "http://127.0.0.1:8545")
@@ -178,6 +180,17 @@ func main() {
 		Addr:              fmt.Sprintf(":%s", *portPtr),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+
+	metricsServer := http.NewServeMux()
+	metricsServer.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		metrics.WritePrometheus(w, true)
+	})
+	go func() {
+		err := http.ListenAndServe("0.0.0.0:"+defaultMetricsPort, metricsServer)
+		if err != nil {
+			logger.Fatal("Failed to start metrics server", zap.Error(err))
+		}
+	}()
 
 	connectionsClosed := make(chan struct{})
 	go func() {

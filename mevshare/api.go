@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/flashbots/mev-share-node/jsonrpcserver"
+	"github.com/flashbots/mev-share-node/metrics"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
@@ -82,6 +83,7 @@ func NewAPI(
 func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMevBundleResponse, error) {
 	logger := m.log
 
+	metrics.IncSbundlesReceived()
 	currentBlock, err := m.eth.BlockNumber(ctx)
 	if err != nil {
 		logger.Error("failed to get current block", zap.Error(err))
@@ -142,6 +144,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 		}
 	}
 
+	metrics.IncSbundlesReceivedValid()
 	highPriority := jsonrpcserver.GetPriority(ctx)
 	err = m.scheduler.ScheduleBundleSimulation(ctx, &bundle, highPriority)
 	if err != nil {
