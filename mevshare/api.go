@@ -80,6 +80,17 @@ func NewAPI(
 	}
 }
 
+func findAndReplace(strs []common.Hash, old common.Hash, new common.Hash) bool {
+	var found bool
+	for i, str := range strs {
+		if str == old {
+			strs[i] = new
+			found = true
+		}
+	}
+	return found
+}
+
 func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMevBundleResponse, error) {
 	logger := m.log
 
@@ -130,7 +141,8 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 		}
 		bundle.Body[0].Bundle = unmatchedBundle
 		bundle.Body[0].Hash = nil
-
+		// replace matching hash with actual bundle hash
+		findAndReplace(bundle.Metadata.BodyHashes, unmatchedHash, unmatchedBundle.Metadata.BundleHash)
 		// send 90 % of the refund to the unmatched bundle or the suggested refund if set
 		refundPercent := RefundPercent
 		if unmatchedBundle.Privacy != nil && unmatchedBundle.Privacy.WantRefund != nil {
