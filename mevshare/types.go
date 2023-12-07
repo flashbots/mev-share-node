@@ -156,7 +156,7 @@ type MevBundleMetadata struct {
 	OriginID     string         `json:"originId,omitempty"`
 	ReceivedAt   hexutil.Uint64 `json:"receivedAt,omitempty"`
 	MatchingHash common.Hash    `json:"matchingHash,omitempty"`
-	Prematched   bool           `json:"prematched,omitempty"`
+	Prematched   bool           `json:"prematched"`
 }
 
 type SendMevBundleResponse struct {
