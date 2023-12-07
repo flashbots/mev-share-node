@@ -3,6 +3,7 @@ module github.com/flashbots/mev-share-node
 go 1.20
 
 require (
+	github.com/VictoriaMetrics/metrics v1.25.3
 	github.com/cenkalti/backoff/v4 v4.2.0
 	github.com/ethereum/go-ethereum v1.12.2
 	github.com/flashbots/go-utils v0.4.11
@@ -19,7 +20,6 @@ require (
 
 require (
 	github.com/StackExchange/wmi v0.0.0-20180116203802-5d049714c4a6 // indirect
-	github.com/VictoriaMetrics/metrics v1.25.3 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.2.1 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.0.2 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
