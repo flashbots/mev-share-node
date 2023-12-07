@@ -186,7 +186,11 @@ func main() {
 		metrics.WritePrometheus(w, true)
 	})
 	go func() {
-		err := http.ListenAndServe("0.0.0.0:"+defaultMetricsPort, metricsServer)
+		mServer := &http.Server{
+			Addr:              fmt.Sprintf("0.0.0.0:%s", defaultMetricsPort),
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		err := mServer.ListenAndServe()
 		if err != nil {
 			logger.Fatal("Failed to start metrics server", zap.Error(err))
 		}

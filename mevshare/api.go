@@ -80,11 +80,11 @@ func NewAPI(
 	}
 }
 
-func findAndReplace(strs []common.Hash, old common.Hash, new common.Hash) bool {
+func findAndReplace(strs []common.Hash, old, replacer common.Hash) bool {
 	var found bool
 	for i, str := range strs {
 		if str == old {
-			strs[i] = new
+			strs[i] = replacer
 			found = true
 		}
 	}
