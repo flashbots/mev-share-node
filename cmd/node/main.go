@@ -181,16 +181,17 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	metricsServer := http.NewServeMux()
-	metricsServer.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+	metricsMux := http.NewServeMux()
+	metricsMux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		metrics.WritePrometheus(w, true)
 	})
 	go func() {
-		mServer := &http.Server{
+		metricsServer := &http.Server{
 			Addr:              fmt.Sprintf("0.0.0.0:%s", defaultMetricsPort),
 			ReadHeaderTimeout: 5 * time.Second,
+			Handler:           metricsMux,
 		}
-		err := mServer.ListenAndServe()
+		err := metricsServer.ListenAndServe()
 		if err != nil {
 			logger.Fatal("Failed to start metrics server", zap.Error(err))
 		}
