@@ -23,9 +23,11 @@ var (
 
 type DBSbundle struct {
 	Hash               []byte         `db:"hash"`
+	MatchingHash       []byte         `db:"matching_hash"`
 	Signer             []byte         `db:"signer"`
 	Cancelled          bool           `db:"cancelled"`
 	AllowMatching      bool           `db:"allow_matching"`
+	Prematched         bool           `db:"prematched"`
 	ReceivedAt         time.Time      `db:"received_at"`
 	SimSuccess         bool           `db:"sim_success"`
 	SimError           sql.NullString `db:"sim_error"`
@@ -45,11 +47,11 @@ type DBSbundle struct {
 }
 
 var insertBundleQuery = `
-INSERT INTO sbundle (hash, signer, cancelled, allow_matching, received_at, 
+INSERT INTO sbundle (hash, matching_hash, signer, cancelled, allow_matching, prematched, received_at, 
                      sim_success, sim_error, simulated_at, sim_eff_gas_price, sim_profit, sim_refundable_value, sim_gas_used,
                      sim_all_sims_gas_used, sim_total_sim_count,
                      body, body_size, origin_id)
-VALUES (:hash, :signer, :cancelled, :allow_matching, :received_at, 
+VALUES (:hash, :matching_hash, :signer, :cancelled, :allow_matching, :prematched, :received_at, 
         :sim_success, :sim_error, :simulated_at, :sim_eff_gas_price, :sim_profit, :sim_refundable_value, :sim_gas_used,
         :sim_all_sims_gas_used, :sim_total_sim_count,
         :body, :body_size, :origin_id)
@@ -70,9 +72,9 @@ SET sim_success = :sim_success, sim_error = :sim_error, simulated_at = :simulate
 WHERE hash = :hash`
 
 var getBundleQuery = `
-SELECT hash, body
+SELECT matching_hash, body
 FROM sbundle
-WHERE hash = $1 AND allow_matching = true AND cancelled = false limit 1`
+WHERE matching_hash = $1 AND allow_matching = true AND cancelled = false limit 1`
 
 var cancelBundleQuery = `UPDATE sbundle SET cancelled = true WHERE hash = $1 AND signer = $2 AND cancelled = false RETURNING hash`
 
@@ -176,7 +178,7 @@ func NewDBBackend(postgresDSN string) (*DBBackend, error) {
 	}, nil
 }
 
-func (b *DBBackend) GetBundle(ctx context.Context, hash common.Hash) (*SendMevBundleArgs, error) {
+func (b *DBBackend) GetBundleByMatchingHash(ctx context.Context, hash common.Hash) (*SendMevBundleArgs, error) {
 	var dbSbundle DBSbundle
 	err := b.getBundle.GetContext(ctx, &dbSbundle, hash.Bytes())
 	if errors.Is(err, sql.ErrNoRows) {
@@ -202,8 +204,10 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 		return known, ErrNilBundleMetadata
 	}
 	dbBundle.Hash = bundle.Metadata.BundleHash.Bytes()
+	dbBundle.MatchingHash = bundle.Metadata.MatchingHash.Bytes()
 	dbBundle.Signer = bundle.Metadata.Signer.Bytes()
 	dbBundle.AllowMatching = bundle.Privacy != nil && bundle.Privacy.Hints.HasHint(HintHash)
+	dbBundle.Prematched = bundle.Metadata.Prematched
 	dbBundle.Cancelled = false
 	dbBundle.ReceivedAt = time.UnixMicro(int64(bundle.Metadata.ReceivedAt))
 	dbBundle.SimSuccess = result.Success

@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/flashbots/go-utils/cli"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/sha3"
 )
 
 var testPostgresDSN = cli.GetEnv("TEST_POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
@@ -20,20 +21,23 @@ func TestDBBackend_GetBundle(t *testing.T) {
 	defer b.Close()
 
 	hash := common.HexToHash("0x0102030405060708091011121314151617181920212223242526272829303132")
-
+	doubleHasher := sha3.NewLegacyKeccak256()
+	doubleHasher.Write(hash.Bytes())
+	dHash := doubleHasher.Sum(nil)
+	doubleHash := common.BytesToHash(dHash)
 	// Delete bundle if it exists
 	_, err = b.db.Exec("DELETE FROM sbundle WHERE hash = $1", hash.Bytes())
 	require.NoError(t, err)
 
 	// Get bundle that doesn't exist
-	_, err = b.GetBundle(context.Background(), hash)
+	_, err = b.GetBundleByMatchingHash(context.Background(), hash)
 	require.ErrorIs(t, err, ErrBundleNotFound)
 
 	// Insert a bundle, that allow matching
-	_, err = b.db.Exec("INSERT INTO sbundle (hash, body, signer, body_size, allow_matching) VALUES ($1, $2, $3, $4, $5)",
-		hash.Bytes(), []byte("{}"), []byte{1}, 1, true)
+	_, err = b.db.Exec("INSERT INTO sbundle (hash, body, signer, body_size, allow_matching, matching_hash) VALUES ($1, $2, $3, $4, $5, $6)",
+		hash.Bytes(), []byte("{}"), []byte{1}, 1, true, doubleHash.Bytes())
 	require.NoError(t, err)
-	_, err = b.GetBundle(context.Background(), hash)
+	_, err = b.GetBundleByMatchingHash(context.Background(), doubleHash)
 	require.NoError(t, err)
 
 	// update allow matching to false
@@ -41,7 +45,7 @@ func TestDBBackend_GetBundle(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get bundle that exists, but doesn't allow matching
-	_, err = b.GetBundle(context.Background(), hash)
+	_, err = b.GetBundleByMatchingHash(context.Background(), hash)
 	require.ErrorIs(t, err, ErrBundleNotFound)
 }
 

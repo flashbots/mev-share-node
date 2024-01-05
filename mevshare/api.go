@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/flashbots/mev-share-node/jsonrpcserver"
+	"github.com/flashbots/mev-share-node/metrics"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
@@ -35,7 +36,7 @@ type SimScheduler interface {
 }
 
 type BundleStorage interface {
-	GetBundle(ctx context.Context, hash common.Hash) (*SendMevBundleArgs, error)
+	GetBundleByMatchingHash(ctx context.Context, hash common.Hash) (*SendMevBundleArgs, error)
 	CancelBundleByHash(ctx context.Context, hash common.Hash, signer common.Address) error
 }
 
@@ -79,9 +80,21 @@ func NewAPI(
 	}
 }
 
+func findAndReplace(strs []common.Hash, old, replacer common.Hash) bool {
+	var found bool
+	for i, str := range strs {
+		if str == old {
+			strs[i] = replacer
+			found = true
+		}
+	}
+	return found
+}
+
 func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMevBundleResponse, error) {
 	logger := m.log
 
+	metrics.IncSbundlesReceived()
 	currentBlock, err := m.eth.BlockNumber(ctx)
 	if err != nil {
 		logger.Error("failed to get current block", zap.Error(err))
@@ -107,6 +120,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 	bundle.Metadata.Signer = signerAddress
 	bundle.Metadata.ReceivedAt = hexutil.Uint64(uint64(time.Now().UnixMicro()))
 	bundle.Metadata.OriginID = origin
+	bundle.Metadata.Prematched = !hasUnmatchedHash
 
 	if hasUnmatchedHash {
 		var unmatchedHash common.Hash
@@ -116,7 +130,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 			return SendMevBundleResponse{}, ErrInternalServiceError
 		}
 
-		unmatchedBundle, err := m.bundleStorage.GetBundle(ctx, unmatchedHash)
+		unmatchedBundle, err := m.bundleStorage.GetBundleByMatchingHash(ctx, unmatchedHash)
 		if err != nil {
 			return SendMevBundleResponse{}, ErrBackrunNotFound
 		}
@@ -127,7 +141,8 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 		}
 		bundle.Body[0].Bundle = unmatchedBundle
 		bundle.Body[0].Hash = nil
-
+		// replace matching hash with actual bundle hash
+		findAndReplace(bundle.Metadata.BodyHashes, unmatchedHash, unmatchedBundle.Metadata.BundleHash)
 		// send 90 % of the refund to the unmatched bundle or the suggested refund if set
 		refundPercent := RefundPercent
 		if unmatchedBundle.Privacy != nil && unmatchedBundle.Privacy.WantRefund != nil {
@@ -141,6 +156,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 		}
 	}
 
+	metrics.IncSbundlesReceivedValid()
 	highPriority := jsonrpcserver.GetPriority(ctx)
 	err = m.scheduler.ScheduleBundleSimulation(ctx, &bundle, highPriority)
 	if err != nil {
