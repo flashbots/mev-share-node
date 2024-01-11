@@ -107,7 +107,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 		return SendMevBundleResponse{}, err
 	}
 	if oldBundle, ok := m.knownBundleCache.Get(hash); ok {
-		if newerInclusion(&oldBundle, &bundle) {
+		if !newerInclusion(&oldBundle, &bundle) {
 			logger.Debug("bundle already known, ignoring", zap.String("hash", hash.Hex()))
 			return SendMevBundleResponse{hash}, nil
 		}
