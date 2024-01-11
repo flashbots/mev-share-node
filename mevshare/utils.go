@@ -119,14 +119,14 @@ func RoundUpWithPrecision(number *big.Int, precisionDigits int) *big.Int {
 	return result
 }
 
-func newerInclusion(old *SendMevBundleArgs, new *SendMevBundleArgs) bool {
+func newerInclusion(old, newBundle *SendMevBundleArgs) bool {
 	if old == nil {
 		return true
 	}
-	if new == nil {
+	if newBundle == nil {
 		return false
 	}
-	if old.Inclusion.MaxBlock < new.Inclusion.MaxBlock {
+	if old.Inclusion.MaxBlock < newBundle.Inclusion.MaxBlock {
 		return true
 	}
 
