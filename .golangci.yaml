@@ -26,6 +26,7 @@ linters:
     - wsl
     - deadcode
     - varcheck
+    - exhaustruct
 
     #
     # Disabled because of generics:

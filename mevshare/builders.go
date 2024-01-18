@@ -3,6 +3,8 @@ package mevshare
 import (
 	"context"
 	"errors"
+	"net"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/flashbots/mev-share-node/metrics"
 	"github.com/ybbus/jsonrpc/v3"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
@@ -80,7 +83,19 @@ func LoadBuilderConfig(file string) (BuildersBackend, error) {
 		}
 
 		cl := jsonrpc.NewClientWithOpts(builder.URL, &jsonrpc.RPCClientOpts{
-			HTTPClient:         nil,
+			HTTPClient: &http.Client{
+				Transport: &http.Transport{
+					DialContext: (&net.Dialer{
+						Timeout:   30 * time.Second,
+						KeepAlive: 30 * time.Second,
+					}).DialContext,
+					MaxIdleConns:          20, // since we have one client per host we may keep it pretty low
+					MaxIdleConnsPerHost:   20,
+					IdleConnTimeout:       30 * time.Second,
+					TLSHandshakeTimeout:   10 * time.Second,
+					ExpectContinueTimeout: 1 * time.Second,
+				},
+			},
 			CustomHeaders:      customHeaders,
 			AllowUnknownFields: false,
 			DefaultRequestID:   0,
@@ -115,7 +130,15 @@ type JSONRPCBuilderBackend struct {
 	API    BuilderAPI
 }
 
-func (b *JSONRPCBuilderBackend) SendBundle(ctx context.Context, bundle *SendMevBundleArgs) error {
+func (b *JSONRPCBuilderBackend) SendBundle(ctx context.Context, bundle *SendMevBundleArgs) (err error) {
+	startAt := time.Now()
+	metrics.IncBundleSentToBuilder(b.Name)
+	defer func() {
+		metrics.RecordBundleSentToBuilderTime(b.Name, time.Since(startAt).Milliseconds())
+		if err != nil {
+			metrics.IncBundleSentToBuilderFailure(b.Name)
+		}
+	}()
 	switch b.API {
 	case BuilderAPIRefundRecipient:
 		refRec, err := ConvertBundleToRefundRecipient(bundle)

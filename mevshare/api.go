@@ -91,9 +91,15 @@ func findAndReplace(strs []common.Hash, old, replacer common.Hash) bool {
 	return found
 }
 
-func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMevBundleResponse, error) {
+func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendMevBundleResponse, err error) {
 	logger := m.log
-
+	startAt := time.Now()
+	defer func() {
+		metrics.RecordRPCCallDuration(SendBundleEndpointName, time.Since(startAt).Milliseconds())
+		if err != nil {
+			metrics.IncRPCCallFailure(SendBundleEndpointName)
+		}
+	}()
 	metrics.IncSbundlesReceived()
 	currentBlock, err := m.eth.BlockNumber(ctx)
 	if err != nil {
@@ -171,7 +177,15 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 	}, nil
 }
 
-func (m *API) SimBundle(ctx context.Context, bundle SendMevBundleArgs, aux SimMevBundleAuxArgs) (*SimMevBundleResponse, error) {
+func (m *API) SimBundle(ctx context.Context, bundle SendMevBundleArgs, aux SimMevBundleAuxArgs) (_ *SimMevBundleResponse, err error) {
+	startAt := time.Now()
+	defer func() {
+		metrics.RecordRPCCallDuration(SimBundleEndpointName, time.Since(startAt).Milliseconds())
+		if err != nil {
+			metrics.IncRPCCallFailure(SimBundleEndpointName)
+		}
+	}()
+
 	if len(m.simBackends) == 0 {
 		return nil, ErrInternalServiceError
 	}
@@ -181,7 +195,7 @@ func (m *API) SimBundle(ctx context.Context, bundle SendMevBundleArgs, aux SimMe
 	simTimeout := int64(simBundleTimeout / time.Millisecond)
 	aux.Timeout = &simTimeout
 
-	err := m.simRateLimiter.Wait(ctx)
+	err = m.simRateLimiter.Wait(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -195,12 +209,19 @@ func (m *API) SimBundle(ctx context.Context, bundle SendMevBundleArgs, aux SimMe
 // CancelBundleByHash cancels a bundle by hash
 // This method is not exposed on the bundle relay.
 // However, it is used by the Flashbots bundle relay for now to handle the cancellation of private transactions.
-func (m *API) CancelBundleByHash(ctx context.Context, hash common.Hash) error {
+func (m *API) CancelBundleByHash(ctx context.Context, hash common.Hash) (err error) {
+	startAt := time.Now()
+	defer func() {
+		metrics.RecordRPCCallDuration(CancelBundleByHashEndpointName, time.Since(startAt).Milliseconds())
+		if err != nil {
+			metrics.IncRPCCallFailure(CancelBundleByHashEndpointName)
+		}
+	}()
 	logger := m.log.With(zap.String("bundle", hash.Hex()))
 	ctx, cancel := context.WithTimeout(ctx, cancelBundleTimeout)
 	defer cancel()
 	signerAddress := jsonrpcserver.GetSigner(ctx)
-	err := m.bundleStorage.CancelBundleByHash(ctx, hash, signerAddress)
+	err = m.bundleStorage.CancelBundleByHash(ctx, hash, signerAddress)
 	if err != nil {
 		if !errors.Is(err, ErrBundleNotCancelled) {
 			logger.Warn("Failed to cancel bundle", zap.Error(err))

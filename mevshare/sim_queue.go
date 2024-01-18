@@ -10,6 +10,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/flashbots/mev-share-node/metrics"
 	"github.com/flashbots/mev-share-node/simqueue"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -119,9 +120,13 @@ type SimulationWorker struct {
 	backgroundWg      *sync.WaitGroup
 }
 
-func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simqueue.QueueItemInfo) error {
+func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simqueue.QueueItemInfo) (err error) {
+	startAt := time.Now()
+	defer func() {
+		metrics.RecordBundleProcessDuration(time.Since(startAt).Milliseconds())
+	}()
 	var bundle SendMevBundleArgs
-	err := json.Unmarshal(data, &bundle)
+	err = json.Unmarshal(data, &bundle)
 	if err != nil {
 		w.log.Error("Failed to unmarshal bundle simulation data", zap.Error(err))
 		return err

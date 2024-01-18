@@ -167,9 +167,9 @@ func main() {
 	api := mevshare.NewAPI(logger, simQueue, dbBackend, cachingEthBackend, signer, simBackends, rate.Limit(rateLimit), buildersBackend, cancelCache)
 
 	jsonRPCServer, err := jsonrpcserver.NewHandler(jsonrpcserver.Methods{
-		"mev_sendBundle":         api.SendBundle,
-		"mev_simBundle":          api.SimBundle,
-		"mev_cancelBundleByHash": api.CancelBundleByHash,
+		mevshare.SendBundleEndpointName:         api.SendBundle,
+		mevshare.SimBundleEndpointName:          api.SimBundle,
+		mevshare.CancelBundleByHashEndpointName: api.CancelBundleByHash,
 	})
 	if err != nil {
 		logger.Fatal("Failed to create jsonrpc server", zap.Error(err))
