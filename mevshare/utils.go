@@ -118,3 +118,17 @@ func RoundUpWithPrecision(number *big.Int, precisionDigits int) *big.Int {
 
 	return result
 }
+
+func newerInclusion(old, newBundle *SendMevBundleArgs) bool {
+	if old == nil {
+		return true
+	}
+	if newBundle == nil {
+		return false
+	}
+	if old.Inclusion.MaxBlock < newBundle.Inclusion.MaxBlock {
+		return true
+	}
+
+	return false
+}

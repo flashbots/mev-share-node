@@ -55,7 +55,7 @@ type API struct {
 	simRateLimiter *rate.Limiter
 	builders       BuildersBackend
 
-	knownBundleCache  *lru.Cache[common.Hash, struct{}]
+	knownBundleCache  *lru.Cache[common.Hash, SendMevBundleArgs]
 	cancellationCache *RedisCancellationCache
 }
 
@@ -75,7 +75,7 @@ func NewAPI(
 		simRateLimiter: rate.NewLimiter(simRateLimit, 1),
 		builders:       builders,
 
-		knownBundleCache:  lru.NewCache[common.Hash, struct{}](bundleCacheSize),
+		knownBundleCache:  lru.NewCache[common.Hash, SendMevBundleArgs](bundleCacheSize),
 		cancellationCache: cancellationCache,
 	}
 }
@@ -106,11 +106,13 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 		logger.Warn("failed to validate bundle", zap.Error(err))
 		return SendMevBundleResponse{}, err
 	}
-	if _, ok := m.knownBundleCache.Get(hash); ok {
-		logger.Debug("bundle already known, ignoring", zap.String("hash", hash.Hex()))
-		return SendMevBundleResponse{hash}, nil
+	if oldBundle, ok := m.knownBundleCache.Get(hash); ok {
+		if !newerInclusion(&oldBundle, &bundle) {
+			logger.Debug("bundle already known, ignoring", zap.String("hash", hash.Hex()))
+			return SendMevBundleResponse{hash}, nil
+		}
 	}
-	m.knownBundleCache.Add(hash, struct{}{})
+	m.knownBundleCache.Add(hash, bundle)
 
 	signerAddress := jsonrpcserver.GetSigner(ctx)
 	origin := jsonrpcserver.GetOrigin(ctx)

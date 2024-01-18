@@ -68,7 +68,7 @@ var updateBundleSimQuery = `
 UPDATE sbundle
 SET sim_success = :sim_success, sim_error = :sim_error, simulated_at = :simulated_at, 
     sim_eff_gas_price = :sim_eff_gas_price, sim_profit = :sim_profit, sim_refundable_value = :sim_refundable_value, 
-    sim_gas_used = :sim_gas_used, sim_all_sims_gas_used = :sim_all_sims_gas_used, sim_total_sim_count = :sim_total_sim_count
+    sim_gas_used = :sim_gas_used, sim_all_sims_gas_used = :sim_all_sims_gas_used, sim_total_sim_count = :sim_total_sim_count, body = :body
 WHERE hash = :hash`
 
 var getBundleQuery = `
@@ -274,6 +274,11 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 				storedBundle.SimTotalSimCount = sql.NullInt64{Int64: 1, Valid: true}
 			}
 			// 2. update bundle
+			// NOTE: we update bundle body as well to make sure we have the latest bundle body in the db.
+			// since we are processing bundle every block (and thus updating in database every block) we'll
+			// have bundle body with the biggest maxBlock in database, which is the desired behavior.
+			// There are cornercases when system crashes, so we do not record latest bundle inclusion in db
+			storedBundle.Body = dbBundle.Body
 			_, err := dbTx.NamedStmtContext(ctx, b.updateBundleSim).ExecContext(ctx, storedBundle)
 			if err != nil {
 				_ = dbTx.Rollback()
