@@ -42,10 +42,10 @@ func NewQueue(
 		workersPerNode: workersPerNode,
 	}
 
-	for i, s := range sim {
+	for i := range sim {
 		worker := SimulationWorker{
 			log:               log.Named("worker").With(zap.Int("worker-id", i)),
-			simulationBackend: s,
+			simulationBackend: sim[i],
 			simRes:            simRes,
 			cancelCache:       cancelCache,
 			backgroundWg:      backgroundWg,
@@ -57,12 +57,12 @@ func NewQueue(
 
 func (q *SimQueue) Start(ctx context.Context) *sync.WaitGroup {
 	process := make([]simqueue.ProcessFunc, 0, len(q.workers)*q.workersPerNode)
-	for _, w := range q.workers {
+	for i := range q.workers {
 		if q.workersPerNode > 1 {
-			workers := simqueue.MultipleWorkers(w.Process, q.workersPerNode, rate.Inf, 1)[0]
-			process = append(process, workers)
+			workers := simqueue.MultipleWorkers(q.workers[i].Process, q.workersPerNode, rate.Inf, 1)
+			process = append(process, workers...)
 		} else {
-			process = append(process, w.Process)
+			process = append(process, q.workers[i].Process)
 		}
 	}
 	blockNumber, err := q.eth.BlockNumber(ctx)

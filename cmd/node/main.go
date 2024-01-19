@@ -165,7 +165,7 @@ func main() {
 
 	cachingEthBackend := mevshare.NewCachingEthClient(ethBackend)
 
-	api := mevshare.NewAPI(logger, simQueue, dbBackend, cachingEthBackend, signer, simBackends, rate.Limit(rateLimit), buildersBackend, cancelCache, time.Millisecond*5)
+	api := mevshare.NewAPI(logger, simQueue, dbBackend, cachingEthBackend, signer, simBackends, rate.Limit(rateLimit), buildersBackend, cancelCache, time.Millisecond*60)
 
 	jsonRPCServer, err := jsonrpcserver.NewHandler(jsonrpcserver.Methods{
 		mevshare.SendBundleEndpointName:         api.SendBundle,
