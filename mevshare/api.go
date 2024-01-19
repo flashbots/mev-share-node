@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/flashbots/mev-share-node/jsonrpcserver"
 	"github.com/flashbots/mev-share-node/metrics"
+	"github.com/flashbots/mev-share-node/spike"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
@@ -55,6 +56,7 @@ type API struct {
 	simRateLimiter *rate.Limiter
 	builders       BuildersBackend
 
+	spikeManager      *spike.Manager[*SendMevBundleArgs]
 	knownBundleCache  *lru.Cache[common.Hash, SendMevBundleArgs]
 	cancellationCache *RedisCancellationCache
 }
@@ -63,18 +65,24 @@ func NewAPI(
 	log *zap.Logger,
 	scheduler SimScheduler, bundleStorage BundleStorage, eth EthClient, signer types.Signer,
 	simBackends []SimulationBackend, simRateLimit rate.Limit, builders BuildersBackend, cancellationCache *RedisCancellationCache,
+	sbundleValidDuration time.Duration,
 ) *API {
+
+	sm := spike.NewManager(func(ctx context.Context, k string) (*SendMevBundleArgs, error) {
+		return bundleStorage.GetBundleByMatchingHash(ctx, common.HexToHash(k))
+	}, sbundleValidDuration)
+
 	return &API{
 		log: log,
 
-		scheduler:      scheduler,
-		bundleStorage:  bundleStorage,
-		eth:            eth,
-		signer:         signer,
-		simBackends:    simBackends,
-		simRateLimiter: rate.NewLimiter(simRateLimit, 1),
-		builders:       builders,
-
+		scheduler:         scheduler,
+		bundleStorage:     bundleStorage,
+		eth:               eth,
+		signer:            signer,
+		simBackends:       simBackends,
+		simRateLimiter:    rate.NewLimiter(simRateLimit, 1),
+		builders:          builders,
+		spikeManager:      sm,
 		knownBundleCache:  lru.NewCache[common.Hash, SendMevBundleArgs](bundleCacheSize),
 		cancellationCache: cancellationCache,
 	}
@@ -142,9 +150,11 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendM
 			return SendMevBundleResponse{}, ErrInternalServiceError
 		}
 		fetchUnmatchedTime := time.Now()
-		unmatchedBundle, err := m.bundleStorage.GetBundleByMatchingHash(ctx, unmatchedHash)
+		unmatchedBundle, err := m.spikeManager.GetResult(ctx, unmatchedHash.String())
+		//unmatchedBundle, err := m.bundleStorage.GetBundleByMatchingHash(ctx, unmatchedHash)
 		metrics.RecordBundleFetchUnmatchedDuration(time.Since(fetchUnmatchedTime).Milliseconds())
 		if err != nil {
+			logger.Error("Failed to fetch unmatched bundle", zap.Error(err), zap.String("matching_hash", unmatchedHash.Hex()))
 			return SendMevBundleResponse{}, ErrBackrunNotFound
 		}
 		if privacy := unmatchedBundle.Privacy; privacy == nil && privacy.Hints.HasHint(HintHash) {
