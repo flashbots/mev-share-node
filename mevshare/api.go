@@ -101,6 +101,8 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendM
 		}
 	}()
 	metrics.IncSbundlesReceived()
+
+	validateBundleTime := time.Now()
 	currentBlock, err := m.eth.BlockNumber(ctx)
 	if err != nil {
 		logger.Error("failed to get current block", zap.Error(err))
@@ -130,6 +132,8 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendM
 	bundle.Metadata.OriginID = origin
 	bundle.Metadata.Prematched = !hasUnmatchedHash
 
+	metrics.RecordBundleValidationDuration(time.Since(validateBundleTime).Milliseconds())
+
 	if hasUnmatchedHash {
 		var unmatchedHash common.Hash
 		if len(bundle.Body) > 0 && bundle.Body[0].Hash != nil {
@@ -137,8 +141,9 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendM
 		} else {
 			return SendMevBundleResponse{}, ErrInternalServiceError
 		}
-
+		fetchUnmatchedTime := time.Now()
 		unmatchedBundle, err := m.bundleStorage.GetBundleByMatchingHash(ctx, unmatchedHash)
+		metrics.RecordBundleFetchUnmatchedDuration(time.Since(fetchUnmatchedTime).Milliseconds())
 		if err != nil {
 			return SendMevBundleResponse{}, ErrBackrunNotFound
 		}

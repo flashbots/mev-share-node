@@ -8,12 +8,15 @@ import (
 )
 
 var (
-	sbundlesReceived              = metrics.NewCounter("sbundles_received_total")
-	sbundlesReceivedValid         = metrics.NewCounter("sbundles_received_valid_total")
-	sbundlesReceivedStale         = metrics.NewCounter("sbundles_received_stale_total")
-	queueFullSbundles             = metrics.NewCounter("sbundles_queue_full_total")
-	queuePopstaleItemSbundles     = metrics.NewCounter("sbundles_queue_pop_stale_item_total")
-	sbundleProcessDurationSummary = metrics.NewSummary("sbundle_process_duration_milliseconds")
+	sbundlesReceived                     = metrics.NewCounter("sbundles_received_total")
+	sbundlesReceivedValid                = metrics.NewCounter("sbundles_received_valid_total")
+	sbundlesReceivedStale                = metrics.NewCounter("sbundles_received_stale_total")
+	queueFullSbundles                    = metrics.NewCounter("sbundles_queue_full_total")
+	queuePopstaleItemSbundles            = metrics.NewCounter("sbundles_queue_pop_stale_item_total")
+	sbundleProcessDurationSummary        = metrics.NewSummary("sbundle_process_duration_milliseconds")
+	sbundleValidationDurationSummary     = metrics.NewSummary("sbundle_validation_duration_milliseconds")
+	sbundleFetchUnmatchedDurationSummary = metrics.NewSummary("sbundle_fetch_unmatched_duration_milliseconds")
+	sbundleAddQueueDurationSummary       = metrics.NewSummary("sbundle_add_queue_milliseconds")
 )
 
 const (
@@ -72,4 +75,16 @@ func RecordBundleSentToBuilderTime(endpoint string, duration int64) {
 
 func RecordBundleProcessDuration(duration int64) {
 	sbundleProcessDurationSummary.Update(float64(duration))
+}
+
+func RecordBundleValidationDuration(duration int64) {
+	sbundleValidationDurationSummary.Update(float64(duration))
+}
+
+func RecordBundleFetchUnmatchedDuration(duration int64) {
+	sbundleFetchUnmatchedDurationSummary.Update(float64(duration))
+}
+
+func RecordBundleAddQueueDuration(duration int64) {
+	sbundleAddQueueDurationSummary.Update(float64(duration))
 }

@@ -105,6 +105,10 @@ func (q *SimQueue) Start(ctx context.Context) *sync.WaitGroup {
 }
 
 func (q *SimQueue) ScheduleBundleSimulation(ctx context.Context, bundle *SendMevBundleArgs, highPriority bool) error {
+	startAt := time.Now()
+	defer func() {
+		metrics.RecordBundleAddQueueDuration(time.Since(startAt).Milliseconds())
+	}()
 	data, err := json.Marshal(bundle)
 	if err != nil {
 		return err
