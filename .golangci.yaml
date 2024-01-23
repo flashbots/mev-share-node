@@ -27,6 +27,7 @@ linters:
     - deadcode
     - varcheck
     - exhaustruct
+    - nolintlint
 
     #
     # Disabled because of generics:

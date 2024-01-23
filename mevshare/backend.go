@@ -32,7 +32,7 @@ type JSONRPCSimulationBackend struct {
 func NewJSONRPCSimulationBackend(url string) *JSONRPCSimulationBackend {
 	return &JSONRPCSimulationBackend{
 		client: jsonrpc.NewClient(url),
-		//todo here use optsx
+		// todo here use optsx
 	}
 }
 

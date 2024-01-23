@@ -1,3 +1,4 @@
+// Package spike provides a primitive to handle spike-like load on retrieving external resources
 package spike
 
 import (
@@ -8,9 +9,11 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 )
 
-const taskQueueLen = 60
-const currentlyExecutedSize = 50
-const defaultCleanupInterval = 5 * time.Millisecond
+const (
+	taskQueueLen           = 60
+	currentlyExecutedSize  = 50
+	defaultCleanupInterval = 5 * time.Millisecond
+)
 
 // TODO: cache errors and allow common.Hash as key
 
@@ -48,6 +51,7 @@ func NewManager[T any](fetch func(ctx context.Context, k string) (T, error), cac
 				var rt T
 				return rt, false
 			}
+			//nolint:forcetypeassert
 			return v.(T), true
 		},
 	})
@@ -136,7 +140,7 @@ func (m *Manager[T]) start() {
 	}
 }
 
-func (m *Manager[T]) GetResult(ctx context.Context, k string) (T, error) {
+func (m *Manager[T]) GetResult(ctx context.Context, k string) (T, error) { //nolint:ireturn
 	r, ok := m.handler.Get(k)
 	if ok {
 		return r, nil

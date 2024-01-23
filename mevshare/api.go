@@ -67,7 +67,6 @@ func NewAPI(
 	simBackends []SimulationBackend, simRateLimit rate.Limit, builders BuildersBackend, cancellationCache *RedisCancellationCache,
 	sbundleValidDuration time.Duration,
 ) *API {
-
 	sm := spike.NewManager(func(ctx context.Context, k string) (*SendMevBundleArgs, error) {
 		return bundleStorage.GetBundleByMatchingHash(ctx, common.HexToHash(k))
 	}, sbundleValidDuration)
@@ -149,7 +148,6 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendM
 		}
 		fetchUnmatchedTime := time.Now()
 		unmatchedBundle, err := m.spikeManager.GetResult(ctx, unmatchedHash.String())
-		//unmatchedBundle, err := m.bundleStorage.GetBundleByMatchingHash(ctx, unmatchedHash)
 		metrics.RecordBundleFetchUnmatchedDuration(time.Since(fetchUnmatchedTime).Milliseconds())
 		if err != nil {
 			logger.Error("Failed to fetch unmatched bundle", zap.Error(err), zap.String("matching_hash", unmatchedHash.Hex()))
