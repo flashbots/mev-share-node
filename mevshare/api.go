@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/flashbots/mev-share-node/jsonrpcserver"
 	"github.com/flashbots/mev-share-node/metrics"
+	"github.com/flashbots/mev-share-node/spike"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
@@ -55,6 +56,7 @@ type API struct {
 	simRateLimiter *rate.Limiter
 	builders       BuildersBackend
 
+	spikeManager      *spike.Manager[*SendMevBundleArgs]
 	knownBundleCache  *lru.Cache[common.Hash, SendMevBundleArgs]
 	cancellationCache *RedisCancellationCache
 }
@@ -63,18 +65,23 @@ func NewAPI(
 	log *zap.Logger,
 	scheduler SimScheduler, bundleStorage BundleStorage, eth EthClient, signer types.Signer,
 	simBackends []SimulationBackend, simRateLimit rate.Limit, builders BuildersBackend, cancellationCache *RedisCancellationCache,
+	sbundleValidDuration time.Duration,
 ) *API {
+	sm := spike.NewManager(func(ctx context.Context, k string) (*SendMevBundleArgs, error) {
+		return bundleStorage.GetBundleByMatchingHash(ctx, common.HexToHash(k))
+	}, sbundleValidDuration)
+
 	return &API{
 		log: log,
 
-		scheduler:      scheduler,
-		bundleStorage:  bundleStorage,
-		eth:            eth,
-		signer:         signer,
-		simBackends:    simBackends,
-		simRateLimiter: rate.NewLimiter(simRateLimit, 1),
-		builders:       builders,
-
+		scheduler:         scheduler,
+		bundleStorage:     bundleStorage,
+		eth:               eth,
+		signer:            signer,
+		simBackends:       simBackends,
+		simRateLimiter:    rate.NewLimiter(simRateLimit, 1),
+		builders:          builders,
+		spikeManager:      sm,
 		knownBundleCache:  lru.NewCache[common.Hash, SendMevBundleArgs](bundleCacheSize),
 		cancellationCache: cancellationCache,
 	}
@@ -91,12 +98,18 @@ func findAndReplace(strs []common.Hash, old, replacer common.Hash) bool {
 	return found
 }
 
-func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMevBundleResponse, error) {
+func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendMevBundleResponse, err error) {
 	logger := m.log
-
+	startAt := time.Now()
+	defer func() {
+		metrics.RecordRPCCallDuration(SendBundleEndpointName, time.Since(startAt).Milliseconds())
+	}()
 	metrics.IncSbundlesReceived()
+
+	validateBundleTime := time.Now()
 	currentBlock, err := m.eth.BlockNumber(ctx)
 	if err != nil {
+		metrics.IncRPCCallFailure(SendBundleEndpointName)
 		logger.Error("failed to get current block", zap.Error(err))
 		return SendMevBundleResponse{}, ErrInternalServiceError
 	}
@@ -124,6 +137,8 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 	bundle.Metadata.OriginID = origin
 	bundle.Metadata.Prematched = !hasUnmatchedHash
 
+	metrics.RecordBundleValidationDuration(time.Since(validateBundleTime).Milliseconds())
+
 	if hasUnmatchedHash {
 		var unmatchedHash common.Hash
 		if len(bundle.Body) > 0 && bundle.Body[0].Hash != nil {
@@ -131,9 +146,12 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 		} else {
 			return SendMevBundleResponse{}, ErrInternalServiceError
 		}
-
-		unmatchedBundle, err := m.bundleStorage.GetBundleByMatchingHash(ctx, unmatchedHash)
+		fetchUnmatchedTime := time.Now()
+		unmatchedBundle, err := m.spikeManager.GetResult(ctx, unmatchedHash.String())
+		metrics.RecordBundleFetchUnmatchedDuration(time.Since(fetchUnmatchedTime).Milliseconds())
 		if err != nil {
+			logger.Error("Failed to fetch unmatched bundle", zap.Error(err), zap.String("matching_hash", unmatchedHash.Hex()))
+			metrics.IncRPCCallFailure(SendBundleEndpointName)
 			return SendMevBundleResponse{}, ErrBackrunNotFound
 		}
 		if privacy := unmatchedBundle.Privacy; privacy == nil && privacy.Hints.HasHint(HintHash) {
@@ -162,6 +180,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 	highPriority := jsonrpcserver.GetPriority(ctx)
 	err = m.scheduler.ScheduleBundleSimulation(ctx, &bundle, highPriority)
 	if err != nil {
+		metrics.IncRPCCallFailure(SendBundleEndpointName)
 		logger.Error("Failed to schedule bundle simulation", zap.Error(err))
 		return SendMevBundleResponse{}, ErrInternalServiceError
 	}
@@ -171,7 +190,15 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (SendMev
 	}, nil
 }
 
-func (m *API) SimBundle(ctx context.Context, bundle SendMevBundleArgs, aux SimMevBundleAuxArgs) (*SimMevBundleResponse, error) {
+func (m *API) SimBundle(ctx context.Context, bundle SendMevBundleArgs, aux SimMevBundleAuxArgs) (_ *SimMevBundleResponse, err error) {
+	startAt := time.Now()
+	defer func() {
+		metrics.RecordRPCCallDuration(SimBundleEndpointName, time.Since(startAt).Milliseconds())
+		if err != nil {
+			metrics.IncRPCCallFailure(SimBundleEndpointName)
+		}
+	}()
+
 	if len(m.simBackends) == 0 {
 		return nil, ErrInternalServiceError
 	}
@@ -181,7 +208,7 @@ func (m *API) SimBundle(ctx context.Context, bundle SendMevBundleArgs, aux SimMe
 	simTimeout := int64(simBundleTimeout / time.Millisecond)
 	aux.Timeout = &simTimeout
 
-	err := m.simRateLimiter.Wait(ctx)
+	err = m.simRateLimiter.Wait(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -195,12 +222,19 @@ func (m *API) SimBundle(ctx context.Context, bundle SendMevBundleArgs, aux SimMe
 // CancelBundleByHash cancels a bundle by hash
 // This method is not exposed on the bundle relay.
 // However, it is used by the Flashbots bundle relay for now to handle the cancellation of private transactions.
-func (m *API) CancelBundleByHash(ctx context.Context, hash common.Hash) error {
+func (m *API) CancelBundleByHash(ctx context.Context, hash common.Hash) (err error) {
+	startAt := time.Now()
+	defer func() {
+		metrics.RecordRPCCallDuration(CancelBundleByHashEndpointName, time.Since(startAt).Milliseconds())
+		if err != nil {
+			metrics.IncRPCCallFailure(CancelBundleByHashEndpointName)
+		}
+	}()
 	logger := m.log.With(zap.String("bundle", hash.Hex()))
 	ctx, cancel := context.WithTimeout(ctx, cancelBundleTimeout)
 	defer cancel()
 	signerAddress := jsonrpcserver.GetSigner(ctx)
-	err := m.bundleStorage.CancelBundleByHash(ctx, hash, signerAddress)
+	err = m.bundleStorage.CancelBundleByHash(ctx, hash, signerAddress)
 	if err != nil {
 		if !errors.Is(err, ErrBundleNotCancelled) {
 			logger.Warn("Failed to cancel bundle", zap.Error(err))

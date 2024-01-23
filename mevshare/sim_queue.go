@@ -10,6 +10,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/flashbots/mev-share-node/metrics"
 	"github.com/flashbots/mev-share-node/simqueue"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -41,10 +42,10 @@ func NewQueue(
 		workersPerNode: workersPerNode,
 	}
 
-	for i, s := range sim {
+	for i := range sim {
 		worker := SimulationWorker{
 			log:               log.Named("worker").With(zap.Int("worker-id", i)),
-			simulationBackend: s,
+			simulationBackend: sim[i],
 			simRes:            simRes,
 			cancelCache:       cancelCache,
 			backgroundWg:      backgroundWg,
@@ -56,12 +57,12 @@ func NewQueue(
 
 func (q *SimQueue) Start(ctx context.Context) *sync.WaitGroup {
 	process := make([]simqueue.ProcessFunc, 0, len(q.workers)*q.workersPerNode)
-	for _, w := range q.workers {
+	for i := range q.workers {
 		if q.workersPerNode > 1 {
-			workers := simqueue.MultipleWorkers(w.Process, q.workersPerNode, rate.Inf, 1)[0]
-			process = append(process, workers)
+			workers := simqueue.MultipleWorkers(q.workers[i].Process, q.workersPerNode, rate.Inf, 1)
+			process = append(process, workers...)
 		} else {
-			process = append(process, w.Process)
+			process = append(process, q.workers[i].Process)
 		}
 	}
 	blockNumber, err := q.eth.BlockNumber(ctx)
@@ -104,6 +105,10 @@ func (q *SimQueue) Start(ctx context.Context) *sync.WaitGroup {
 }
 
 func (q *SimQueue) ScheduleBundleSimulation(ctx context.Context, bundle *SendMevBundleArgs, highPriority bool) error {
+	startAt := time.Now()
+	defer func() {
+		metrics.RecordBundleAddQueueDuration(time.Since(startAt).Milliseconds())
+	}()
 	data, err := json.Marshal(bundle)
 	if err != nil {
 		return err
@@ -119,9 +124,13 @@ type SimulationWorker struct {
 	backgroundWg      *sync.WaitGroup
 }
 
-func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simqueue.QueueItemInfo) error {
+func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simqueue.QueueItemInfo) (err error) {
+	startAt := time.Now()
+	defer func() {
+		metrics.RecordBundleProcessDuration(time.Since(startAt).Milliseconds())
+	}()
 	var bundle SendMevBundleArgs
-	err := json.Unmarshal(data, &bundle)
+	err = json.Unmarshal(data, &bundle)
 	if err != nil {
 		w.log.Error("Failed to unmarshal bundle simulation data", zap.Error(err))
 		return err

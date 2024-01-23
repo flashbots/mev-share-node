@@ -15,6 +15,12 @@ var (
 	ErrNilBundleMetadata = errors.New("bundle metadata is nil")
 )
 
+const (
+	SendBundleEndpointName         = "mev_sendBundle"
+	SimBundleEndpointName          = "mev_simBundle"
+	CancelBundleByHashEndpointName = "mev_cancelBundleByHash"
+)
+
 // HintIntent is a set of hint intents
 // its marshalled as an array of strings
 type HintIntent uint8

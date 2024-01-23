@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
@@ -164,12 +165,12 @@ func main() {
 
 	cachingEthBackend := mevshare.NewCachingEthClient(ethBackend)
 
-	api := mevshare.NewAPI(logger, simQueue, dbBackend, cachingEthBackend, signer, simBackends, rate.Limit(rateLimit), buildersBackend, cancelCache)
+	api := mevshare.NewAPI(logger, simQueue, dbBackend, cachingEthBackend, signer, simBackends, rate.Limit(rateLimit), buildersBackend, cancelCache, time.Millisecond*60)
 
 	jsonRPCServer, err := jsonrpcserver.NewHandler(jsonrpcserver.Methods{
-		"mev_sendBundle":         api.SendBundle,
-		"mev_simBundle":          api.SimBundle,
-		"mev_cancelBundleByHash": api.CancelBundleByHash,
+		mevshare.SendBundleEndpointName:         api.SendBundle,
+		mevshare.SimBundleEndpointName:          api.SimBundle,
+		mevshare.CancelBundleByHashEndpointName: api.CancelBundleByHash,
 	})
 	if err != nil {
 		logger.Fatal("Failed to create jsonrpc server", zap.Error(err))
@@ -186,11 +187,18 @@ func main() {
 		metrics.WritePrometheus(w, true)
 	})
 	go func() {
+		metricsMux.Handle("/debug/pprof/", http.HandlerFunc(pprof.Index))
+		metricsMux.Handle("/debug/pprof/cmdline", http.HandlerFunc(pprof.Cmdline))
+		metricsMux.Handle("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
+		metricsMux.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
+		metricsMux.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
+
 		metricsServer := &http.Server{
 			Addr:              fmt.Sprintf("0.0.0.0:%s", defaultMetricsPort),
 			ReadHeaderTimeout: 5 * time.Second,
 			Handler:           metricsMux,
 		}
+
 		err := metricsServer.ListenAndServe()
 		if err != nil {
 			logger.Fatal("Failed to start metrics server", zap.Error(err))
