@@ -99,6 +99,9 @@ func main() {
 	if err != nil {
 		logger.Fatal("Failed to parse redis url", zap.Error(err))
 	}
+	redisOpts.MinIdleConns = 20
+	redisOpts.PoolSize = 100
+
 	redisClient := redis.NewClient(redisOpts)
 
 	var simBackends []mevshare.SimulationBackend //nolint:prealloc
