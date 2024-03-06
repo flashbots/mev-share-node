@@ -119,6 +119,8 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendM
 		logger.Warn("failed to validate bundle", zap.Error(err))
 		return SendMevBundleResponse{}, err
 	}
+	logger.Debug("received bundle", zap.String("bundle", hash.String()), zap.Time("receivedAt", startAt), zap.Int64("timestamp", startAt.Unix()))
+
 	if oldBundle, ok := m.knownBundleCache.Get(hash); ok {
 		if !newerInclusion(&oldBundle, &bundle) {
 			logger.Debug("bundle already known, ignoring", zap.String("hash", hash.Hex()))

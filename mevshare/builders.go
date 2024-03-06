@@ -206,10 +206,11 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 
 			start := time.Now()
 			err := builder.SendBundle(ctx, &args)
-			logger.Debug("Sent bundle to internal builder", zap.String("builder", builder.Name), zap.Duration("duration", time.Since(start)), zap.Error(err))
+			now := time.Now()
+			logger.Debug("Sent bundle to internal builder", zap.String("builder", builder.Name), zap.Duration("duration", time.Since(start)), zap.Error(err), zap.Time("time", now), zap.Int64("timestamp", now.Unix()))
 
 			if err != nil {
-				logger.Warn("Failed to send bundle to internal builder", zap.Error(err), zap.String("builder", builder.Name))
+				logger.Warn("Failed to send bundle to internal builder", zap.Error(err), zap.String("builder", builder.Name), zap.Time("time", now), zap.Int64("timestamp", now.Unix()))
 			} else {
 				internalBuildersSuccess[idx] = true
 			}
@@ -236,10 +237,11 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 
 					start := time.Now()
 					err := builder.SendBundle(ctx, &args)
-					logger.Debug("Sent bundle to external builder", zap.String("builder", builder.Name), zap.Duration("duration", time.Since(start)), zap.Error(err))
+					now := time.Now()
+					logger.Debug("Sent bundle to external builder", zap.String("builder", builder.Name), zap.Duration("duration", time.Since(start)), zap.Error(err), zap.Time("time", now), zap.Int64("timestamp", now.Unix()))
 
 					if err != nil {
-						logger.Warn("Failed to send bundle to external builder", zap.Error(err), zap.String("builder", builder.Name))
+						logger.Warn("Failed to send bundle to external builder", zap.Error(err), zap.String("builder", builder.Name), zap.Time("time", now), zap.Int64("timestamp", now.Unix()))
 					}
 				}(builder)
 			} else {
