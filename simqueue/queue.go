@@ -106,7 +106,8 @@ var (
 
 type QueueItemInfo struct {
 	// Number of times this item was retried before the success.
-	Retries int
+	Retries     int
+	TargetBlock uint64
 }
 
 type ProcessFunc func(ctx context.Context, data []byte, info QueueItemInfo) error
@@ -164,6 +165,7 @@ func (s *RedisQueue) UpdateBlock(block uint64) error {
 	if current > block {
 		return ErrBlockNumberIncorrect
 	}
+	s.log.Debug("updating block, sbundles for the next block will be processed", zap.Uint64("current", current), zap.Uint64("new", block), zap.Time("time", time.Now()))
 	atomic.StoreUint64(s.currentBlock, block)
 	return nil
 }
@@ -338,7 +340,7 @@ func (s *RedisQueue) processNextItem(ctx context.Context, process ProcessFunc) e
 	// process item
 	workerCtx, workerCancel := context.WithTimeout(ctx, s.Config.WorkerTimeout)
 	defer workerCancel()
-	info := QueueItemInfo{Retries: int(args.iteration)}
+	info := QueueItemInfo{Retries: int(args.iteration), TargetBlock: args.minTargetBlock}
 	err = process(workerCtx, args.data, info)
 
 	switch {
