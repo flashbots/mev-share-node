@@ -140,7 +140,7 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 	if bundle.Metadata != nil {
 		hash = bundle.Metadata.BundleHash
 	}
-	logger := w.log.With(zap.String("bundle", hash.Hex()))
+	logger := w.log.With(zap.String("bundle", hash.Hex()), zap.Uint64("target_block", info.TargetBlock))
 
 	// Check if bundle was cancelled
 	cancelled, err := w.isBundleCancelled(ctx, &bundle)
@@ -179,7 +179,11 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 			return simqueue.ErrProcessScheduleNextBlock
 		}
 	}
-
+	// mev-share-node knows that new block already arrived, but simcluster node lagging behind so we should retry
+	if uint64(result.StateBlock) < info.TargetBlock-1 {
+		logger.Warn("Bundle simulated on outdated block, retrying")
+		return simqueue.ErrProcessWorkerError
+	}
 	w.backgroundWg.Add(1)
 	go func() {
 		defer w.backgroundWg.Done()
