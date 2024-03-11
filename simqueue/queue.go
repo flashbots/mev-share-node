@@ -365,7 +365,7 @@ func (s *RedisQueue) processNextItem(ctx context.Context, process ProcessFunc) e
 		}
 	case errors.Is(err, ErrLaggingBlock):
 		s.log.Debug("worker iteration failed, lagging block", zap.Error(err), zap.Uint16("iteration", args.iteration))
-		err := s.retryItem(ctx, args, true, false, back)
+		err := s.retryItem(ctx, args, false, false, back)
 		if err != nil {
 			return err
 		}
