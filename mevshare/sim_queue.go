@@ -179,10 +179,10 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 			return simqueue.ErrProcessScheduleNextBlock
 		}
 	}
-	// mev-share-node knows that new block already arrived, but simcluster node lagging behind so we should retry
+	// mev-share-node knows that new block already arrived, but the node this worker connected to is lagging behind so we should retry
 	if uint64(result.StateBlock) < info.TargetBlock-1 {
 		logger.Warn("Bundle simulated on outdated block, retrying")
-		return simqueue.ErrProcessWorkerError
+		return simqueue.ErrLaggingBlock
 	}
 	w.backgroundWg.Add(1)
 	go func() {
