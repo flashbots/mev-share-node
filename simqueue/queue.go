@@ -99,6 +99,8 @@ var (
 	ErrProcessScheduleNextBlock = errors.New("try to schedule item for the next block")
 	// ErrProcessWorkerError is returned by ProcessFunc if item should be retried on the same block by a different worker.
 	ErrProcessWorkerError = errors.New("worker error, retry processing on another worker")
+	// ErrLaggingBlock is returned by ProcessFunc if item should be processed by block that current node doesn't yet have
+	ErrLaggingBlock = errors.New("worker error, dedicated node is lagging behind the current block")
 	// ErrProcessUnrecoverable is returned by ProcessFunc if item should not be retried.
 	// For example, if an item was canceled or error is unrecoverable.
 	ErrProcessUnrecoverable = errors.New("unrecoverable error, item will not be retried")
@@ -361,6 +363,13 @@ func (s *RedisQueue) processNextItem(ctx context.Context, process ProcessFunc) e
 		if err != nil {
 			return err
 		}
+	case errors.Is(err, ErrLaggingBlock):
+		s.log.Debug("worker iteration failed, lagging block", zap.Error(err), zap.Uint16("iteration", args.iteration))
+		err := s.retryItem(ctx, args, false, false, back)
+		if err != nil {
+			return err
+		}
+		time.Sleep(50 * time.Millisecond)
 	case errors.Is(err, ErrProcessUnrecoverable):
 		s.log.Debug("worker iteration failed, unrecoverable error", zap.Error(err), zap.Uint16("iteration", args.iteration))
 	case err == nil:
