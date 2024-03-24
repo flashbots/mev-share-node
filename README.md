@@ -2,7 +2,7 @@
 
 > :warning: **DISCLAIMER**: The Flashbots mev-share node is under active development. This code is in beta and may have performance issues or other vulnerabilities. While we welcome input in the form of pull requests or issues, Flashbots does not commit to particular SLAs around responding or maintaining this repository.
 
-[![Test status](https://github.com/flashbots/go-template/workflows/Checks/badge.svg)](https://github.com/flashbots/go-template/actions?query=workflow%3A%22Checks%22)
+[![Checks status](https://github.com/flashbots/mev-share-node/actions/workflows/checks.yml/badge.svg)](https://github.com/flashbots/mev-share-node/actions/workflows/checks.yml)
 
 This repo is an implementation of the MEV-Share API.
 It handles tasks such as bundle simulation, matching, and hint extraction.
