@@ -167,6 +167,8 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 		zap.String("eth_refundable_value", formatUnits(result.RefundableValue.ToInt(), "eth")),
 		zap.Uint64("gas_used", uint64(result.GasUsed)),
 		zap.Uint64("state_block", uint64(result.StateBlock)),
+		zap.String("exec_error", result.ExecError),
+		zap.String("revert", result.Revert.String()),
 		zap.Int("retries", info.Retries),
 	)
 

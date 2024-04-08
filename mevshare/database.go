@@ -222,11 +222,12 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 	dbBundle.SimAllSimsGasUsed = sql.NullInt64{Int64: int64(result.GasUsed), Valid: true}
 	dbBundle.SimTotalSimCount = sql.NullInt64{Int64: 1, Valid: true}
 	dbBundle.Body, err = json.Marshal(bundle)
-	dbBundle.ExecError = sql.NullString{String: result.ExecError, Valid: result.ExecError != ""}
-	dbBundle.Revert = result.Revert
 	if err != nil {
 		return known, err
 	}
+	dbBundle.ExecError = sql.NullString{String: result.ExecError, Valid: result.ExecError != ""}
+	dbBundle.Revert = result.Revert
+
 	dbBundle.BodySize = len(bundle.Body)
 	dbBundle.OriginID = sql.NullString{String: bundle.Metadata.OriginID, Valid: bundle.Metadata.OriginID != ""}
 
