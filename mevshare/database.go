@@ -44,17 +44,19 @@ type DBSbundle struct {
 	BodySize         int            `db:"body_size"`
 	OriginID         sql.NullString `db:"origin_id"`
 	InsertedAt       time.Time      `db:"inserted_at"`
+	ExecError        sql.NullString `db:"exec_error"`
+	Revert           []byte         `db:"revert"`
 }
 
 var insertBundleQuery = `
 INSERT INTO sbundle (hash, matching_hash, signer, cancelled, allow_matching, prematched, received_at, 
                      sim_success, sim_error, simulated_at, sim_eff_gas_price, sim_profit, sim_refundable_value, sim_gas_used,
                      sim_all_sims_gas_used, sim_total_sim_count,
-                     body, body_size, origin_id)
+                     body, body_size, origin_id, exec_error, revert)
 VALUES (:hash, :matching_hash, :signer, :cancelled, :allow_matching, :prematched, :received_at, 
         :sim_success, :sim_error, :simulated_at, :sim_eff_gas_price, :sim_profit, :sim_refundable_value, :sim_gas_used,
         :sim_all_sims_gas_used, :sim_total_sim_count,
-        :body, :body_size, :origin_id)
+        :body, :body_size, :origin_id, :exec_error, :revert)
 ON CONFLICT (hash) DO NOTHING
 RETURNING hash`
 
@@ -68,7 +70,7 @@ var updateBundleSimQuery = `
 UPDATE sbundle
 SET sim_success = :sim_success, sim_error = :sim_error, simulated_at = :simulated_at, 
     sim_eff_gas_price = :sim_eff_gas_price, sim_profit = :sim_profit, sim_refundable_value = :sim_refundable_value, 
-    sim_gas_used = :sim_gas_used, sim_all_sims_gas_used = :sim_all_sims_gas_used, sim_total_sim_count = :sim_total_sim_count, body = :body
+    sim_gas_used = :sim_gas_used, sim_all_sims_gas_used = :sim_all_sims_gas_used, sim_total_sim_count = :sim_total_sim_count, body = :body, exec_error = :exec_error, revert = :revert
 WHERE hash = :hash`
 
 var getBundleQuery = `
@@ -220,6 +222,8 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 	dbBundle.SimAllSimsGasUsed = sql.NullInt64{Int64: int64(result.GasUsed), Valid: true}
 	dbBundle.SimTotalSimCount = sql.NullInt64{Int64: 1, Valid: true}
 	dbBundle.Body, err = json.Marshal(bundle)
+	dbBundle.ExecError = sql.NullString{String: result.ExecError, Valid: result.ExecError != ""}
+	dbBundle.Revert = result.Revert
 	if err != nil {
 		return known, err
 	}
@@ -261,6 +265,8 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 				storedBundle.SimProfit = sql.NullString{String: dbIntToEth(&result.Profit), Valid: result.Success}
 				storedBundle.SimRefundableValue = sql.NullString{String: dbIntToEth(&result.RefundableValue), Valid: result.Success}
 				storedBundle.SimGasUsed = sql.NullInt64{Int64: int64(result.GasUsed), Valid: true}
+				storedBundle.ExecError = sql.NullString{String: result.ExecError, Valid: result.ExecError != ""}
+				storedBundle.Revert = result.Revert
 			}
 
 			if storedBundle.SimTotalSimCount.Valid {

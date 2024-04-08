@@ -178,6 +178,8 @@ type SimMevBundleResponse struct {
 	RefundableValue hexutil.Big      `json:"refundableValue"`
 	GasUsed         hexutil.Uint64   `json:"gasUsed"`
 	BodyLogs        []SimMevBodyLogs `json:"logs,omitempty"`
+	ExecError       string           `json:"execError,omitempty"`
+	Revert          hexutil.Bytes    `json:"revert,omitempty"`
 }
 
 type SimMevBundleAuxArgs struct {
