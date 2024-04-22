@@ -28,6 +28,7 @@ linters:
     - varcheck
     - exhaustruct
     - nolintlint
+    - depguard
 
     #
     # Disabled because of generics:

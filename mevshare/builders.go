@@ -204,7 +204,7 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 	}
 	cleanBundle(&args)
 
-	//for internal builders send signing_address
+	// for internal builders send signing_address
 	iArgs := &SendMevBundleArgs{
 		Version:   args.Version,
 		Inclusion: args.Inclusion,
