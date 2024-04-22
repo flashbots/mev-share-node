@@ -189,6 +189,13 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 	args := *bundle
 	args.Inclusion.BlockNumber = hexutil.Uint64(targetBlock)
 	args.Inclusion.MaxBlock = hexutil.Uint64(targetBlock)
+	var signingAddress common.Address
+	if args.Metadata != nil {
+		signingAddress = args.Metadata.Signer
+	}
+	if signingAddress == (common.Address{}) {
+		logger.Warn("No signing address provided for bundle")
+	}
 	var builders []string
 	if args.Privacy != nil {
 		// it should already be cleaned while matching, but just in case we do it again here
@@ -197,6 +204,17 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 	}
 	cleanBundle(&args)
 
+	//for internal builders send signing_address
+	iArgs := &SendMevBundleArgs{
+		Version:   args.Version,
+		Inclusion: args.Inclusion,
+		Body:      args.Body,
+		Validity:  args.Validity,
+		Privacy:   args.Privacy,
+		Metadata: &MevBundleMetadata{
+			Signer: signingAddress,
+		},
+	}
 	// always send to internal builders
 	internalBuildersSuccess := make([]bool, len(b.internalBuilders))
 	for idx, builder := range b.internalBuilders {
@@ -205,7 +223,7 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 			defer wg.Done()
 
 			start := time.Now()
-			err := builder.SendBundle(ctx, &args)
+			err := builder.SendBundle(ctx, iArgs)
 			now := time.Now()
 			logger.Debug("Sent bundle to internal builder", zap.String("builder", builder.Name), zap.Duration("duration", time.Since(start)), zap.Error(err), zap.Time("time", now), zap.Int64("timestamp", now.Unix()))
 
@@ -234,7 +252,6 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 				wg.Add(1)
 				go func(builder JSONRPCBuilderBackend) {
 					defer wg.Done()
-
 					start := time.Now()
 					err := builder.SendBundle(ctx, &args)
 					now := time.Now()
