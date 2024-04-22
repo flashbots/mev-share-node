@@ -35,7 +35,7 @@ func cleanBody(bundle *SendMevBundleArgs) {
 
 // MergeInclusionIntervals writes to the topLevel inclusion value of overlap between inner and topLevel
 // or return error if there is no overlap
-func MergeInclusionIntervals(topLevel, inner *MevBundleInclusion) error {
+func MergeInclusionIntervals(topLevel *MevBundleInclusion, inner MevBundleInclusion) error {
 	if topLevel.MaxBlock < inner.BlockNumber || inner.MaxBlock < topLevel.BlockNumber {
 		return ErrInvalidInclusion
 	}
@@ -117,7 +117,7 @@ func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint
 			bodyHashes = append(bodyHashes, tx.Hash())
 			txs++
 		} else if el.Bundle != nil {
-			err = MergeInclusionIntervals(&bundle.Inclusion, &el.Bundle.Inclusion)
+			err = MergeInclusionIntervals(&bundle.Inclusion, el.Bundle.Inclusion)
 			if err != nil {
 				return hash, txs, unmatched, err
 			}

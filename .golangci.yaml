@@ -29,6 +29,9 @@ linters:
     - exhaustruct
     - nolintlint
     - depguard
+    - testifylint
+    - perfsprint
+    - gofumpt
 
     #
     # Disabled because of generics:

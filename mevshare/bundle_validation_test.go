@@ -131,13 +131,14 @@ func TestMergeInclusionIntervals(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			bottomCopy := c.bottom
-			err := MergeInclusionIntervals(&c.top, &bottomCopy)
+			topCopy := c.top
+			err := MergeInclusionIntervals(&topCopy, bottomCopy)
 			if c.err != nil {
 				require.ErrorIs(t, err, c.err)
 			} else {
 				require.NoError(t, err)
 			}
-			require.Equal(t, c.expectedTop, c.top)
+			require.Equal(t, c.expectedTop, topCopy)
 			require.Equal(t, c.bottom, bottomCopy)
 		})
 	}

@@ -172,7 +172,7 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendM
 		}
 		bundle.Validity.Refund = []RefundConstraint{{0, refundPercent}}
 		MergePrivacyBuilders(&bundle)
-		err = MergeInclusionIntervals(&bundle.Inclusion, &unmatchedBundle.Inclusion)
+		err = MergeInclusionIntervals(&bundle.Inclusion, unmatchedBundle.Inclusion)
 		if err != nil {
 			return SendMevBundleResponse{}, ErrBackrunInclusion
 		}
