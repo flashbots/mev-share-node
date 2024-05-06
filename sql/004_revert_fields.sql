@@ -1,0 +1,2 @@
+ALTER TABLE sbundle ADD COLUMN exec_error TEXT;
+ALTER TABLE sbundle ADD COLUMN revert BYTEA;
