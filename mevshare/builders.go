@@ -47,6 +47,7 @@ type BuildersConfig struct {
 		API      string `yaml:"api"`
 		Internal bool   `yaml:"internal,omitempty"`
 		Disabled bool   `yaml:"disabled,omitempty"`
+		Delay    bool   `yaml:"delay,omitempty"`
 	} `yaml:"builders"`
 	OrderflowHeader      bool   `yaml:"orderflowHeader,omitempty"`
 	OrderflowHeaderValue string `yaml:"orderflowHeaderValue,omitempty"`
@@ -104,6 +105,7 @@ func LoadBuilderConfig(file string) (BuildersBackend, error) {
 			Name:   strings.ToLower(builder.Name),
 			Client: cl,
 			API:    api,
+			Delay:  builder.Delay,
 		}
 
 		if builder.Internal {
@@ -128,6 +130,7 @@ type JSONRPCBuilderBackend struct {
 	Name   string
 	Client jsonrpc.RPCClient
 	API    BuilderAPI
+	Delay  bool
 }
 
 func (b *JSONRPCBuilderBackend) SendBundle(ctx context.Context, bundle *SendMevBundleArgs) (err error) {
@@ -184,7 +187,7 @@ type BuildersBackend struct {
 // Bundles are sent to all builders in parallel.
 func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bundle *SendMevBundleArgs, targetBlock uint64) { //nolint:gocognit
 	var wg sync.WaitGroup
-
+	isFirstBlock := uint64(bundle.Inclusion.BlockNumber) == targetBlock
 	// clean metadata, privacy, inclusion
 	args := *bundle
 	args.Inclusion.BlockNumber = hexutil.Uint64(targetBlock)
@@ -221,6 +224,11 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 		wg.Add(1)
 		go func(builder JSONRPCBuilderBackend, idx int) {
 			defer wg.Done()
+			if builder.Delay && isFirstBlock {
+				// mark as success
+				internalBuildersSuccess[idx] = true
+				return
+			}
 
 			start := time.Now()
 			err := builder.SendBundle(ctx, iArgs)
@@ -251,6 +259,9 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 			if builder, ok := b.externalBuilders[target]; ok {
 				wg.Add(1)
 				go func(builder JSONRPCBuilderBackend) {
+					if builder.Delay && isFirstBlock {
+						return
+					}
 					defer wg.Done()
 					start := time.Now()
 					err := builder.SendBundle(ctx, &args)
