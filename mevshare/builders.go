@@ -226,6 +226,7 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 			defer wg.Done()
 			if builder.Delay && isFirstBlock {
 				// mark as success
+				logger.Debug("Skipping builder due to delay", zap.String("builder", builder.Name), zap.Uint64("blockNumber", uint64(bundle.Inclusion.BlockNumber)), zap.Uint64("targetBlock", targetBlock))
 				internalBuildersSuccess[idx] = true
 				return
 			}
@@ -260,6 +261,7 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 				wg.Add(1)
 				go func(builder JSONRPCBuilderBackend) {
 					if builder.Delay && isFirstBlock {
+						logger.Debug("Skipping builder due to delay", zap.String("builder", builder.Name), zap.Uint64("blockNumber", uint64(bundle.Inclusion.BlockNumber)), zap.Uint64("targetBlock", targetBlock))
 						return
 					}
 					defer wg.Done()
