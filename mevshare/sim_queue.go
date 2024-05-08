@@ -173,6 +173,8 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 		zap.String("exec_error", result.ExecError),
 		zap.String("revert", result.Revert.String()),
 		zap.Int("retries", info.Retries),
+		zap.String("replacement_uuid", bundle.ReplacementUUID),
+		zap.Uint64("replacement_nonce", bundle.Metadata.ReplacementNonce),
 	)
 	// mev-share-node knows that new block already arrived, but the node this worker connected to is lagging behind so we should retry
 	if uint64(result.StateBlock) < info.TargetBlock-1 {
@@ -193,6 +195,7 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 
 	shouldCancel := bundle.ReplacementUUID != "" && !result.Success
 	if shouldCancel {
+		logger.Info("Cancelling bundle", zap.String("replacement_uuid", bundle.ReplacementUUID))
 		w.backgroundWg.Add(1)
 		go func() {
 			defer w.backgroundWg.Done()

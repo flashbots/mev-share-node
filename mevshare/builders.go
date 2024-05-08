@@ -212,6 +212,7 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 	if signingAddress == (common.Address{}) {
 		logger.Warn("No signing address provided for bundle")
 	}
+	logger = logger.With(zap.Bool("shouldCancel", shouldCancel))
 	var builders []string
 	if args.Privacy != nil {
 		// it should already be cleaned while matching, but just in case we do it again here
