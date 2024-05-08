@@ -1,3 +1,4 @@
+// Package redis provides an adapter to redis client
 package redis
 
 import (
