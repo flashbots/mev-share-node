@@ -187,7 +187,7 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 		isOldBundle = true
 		logger.Error("Failed to get replacement nonce", zap.Error(err))
 	}
-	if err == nil && rnonce < bundle.Metadata.ReplacementNonce {
+	if err == nil && rnonce > bundle.Metadata.ReplacementNonce {
 		isOldBundle = true
 	}
 
