@@ -228,10 +228,10 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 		Body:            args.Body,
 		Validity:        args.Validity,
 		Privacy:         args.Privacy,
-		ReplacementUUID: args.ReplacementUUID,
+		ReplacementUUID: bundle.ReplacementUUID,
 		Metadata: &MevBundleMetadata{
 			Signer:           signingAddress,
-			ReplacementNonce: args.Metadata.ReplacementNonce,
+			ReplacementNonce: bundle.Metadata.ReplacementNonce,
 			Cancelled:        shouldCancel,
 		},
 	}
