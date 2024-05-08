@@ -70,7 +70,7 @@ func izZeroPriorityFeeTX(bundle *SendMevBundleArgs) bool {
 
 // SimulatedBundle is called when simulation is done
 // NOTE: we return error only if we want to retry the simulation
-func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context, bundle *SendMevBundleArgs, sim *SimMevBundleResponse, info simqueue.QueueItemInfo, shouldCancel bool, isOldBundle bool) error {
+func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context, bundle *SendMevBundleArgs, sim *SimMevBundleResponse, info simqueue.QueueItemInfo, shouldCancel, isOldBundle bool) error {
 	start := time.Now()
 
 	var hash common.Hash
