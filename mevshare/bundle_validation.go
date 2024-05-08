@@ -13,6 +13,7 @@ var (
 	ErrUnsupportedBundleVersion = errors.New("unsupported bundle version")
 	ErrBundleTooDeep            = errors.New("bundle too deep")
 	ErrInvalidBundleConstraints = errors.New("invalid bundle constraints")
+	ErrInvalidRevertMode        = errors.New("invalid revert mode")
 	ErrInvalidBundlePrivacy     = errors.New("invalid bundle privacy")
 )
 
@@ -21,6 +22,7 @@ func cleanBody(bundle *SendMevBundleArgs) {
 		if el.Hash != nil {
 			el.Tx = nil
 			el.Bundle = nil
+			el.RevertMode = ""
 		}
 		if el.Tx != nil {
 			el.Hash = nil
@@ -29,6 +31,7 @@ func cleanBody(bundle *SendMevBundleArgs) {
 		if el.Bundle != nil {
 			el.Hash = nil
 			el.Tx = nil
+			el.RevertMode = ""
 		}
 	}
 }
@@ -59,6 +62,33 @@ func MergeBuilders(topLevel, inner *MevBundlePrivacy) {
 		return
 	}
 	topLevel.Builders = Intersect(topLevel.Builders, inner.Builders)
+}
+
+func validateRevertMode(revertMode string) bool {
+	if revertMode != "" && revertMode != RevertModeFail && revertMode != RevertModeDrop && revertMode != RevertModeAllow {
+		return false
+	}
+	return true
+}
+
+// applyRevertMode prefers configuration form revertMode, if it's empty configures according to canRevert
+// it is backward compatible with the old behavior where only canRevert was used
+func applyRevertMode(canRevert bool, revertMode string) (bool, string) {
+	if revertMode != "" {
+		if revertMode == RevertModeFail {
+			return false, revertMode
+		}
+		if revertMode == RevertModeDrop {
+			return false, revertMode
+		}
+		if revertMode == RevertModeAllow {
+			return true, revertMode
+		}
+	}
+	if canRevert {
+		return true, RevertModeAllow
+	}
+	return false, RevertModeFail
 }
 
 func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint64, signer types.Signer) (hash common.Hash, txs int, unmatched bool, err error) { //nolint:gocognit,gocyclo
@@ -114,6 +144,11 @@ func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint
 			if err != nil {
 				return hash, txs, unmatched, err
 			}
+			if !validateRevertMode(el.RevertMode) {
+				return hash, txs, unmatched, ErrInvalidRevertMode
+			}
+			bundle.Body[i].CanRevert, bundle.Body[i].RevertMode = applyRevertMode(el.CanRevert, el.RevertMode)
+
 			bodyHashes = append(bodyHashes, tx.Hash())
 			txs++
 		} else if el.Bundle != nil {
@@ -210,6 +245,7 @@ func validateBundleInner(level int, bundle *SendMevBundleArgs, currentBlock uint
 	bundle.Metadata = &MevBundleMetadata{}
 	bundle.Metadata.BundleHash = hash
 	bundle.Metadata.BodyHashes = bodyHashes
+	bundle.Metadata.ReplacementNonce = 0
 	matchingHasher := sha3.NewLegacyKeccak256()
 	matchingHasher.Write(hash[:])
 	matchingHash := common.BytesToHash(matchingHasher.Sum(nil))

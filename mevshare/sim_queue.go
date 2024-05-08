@@ -10,6 +10,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/flashbots/mev-share-node/adapters/redis"
 	"github.com/flashbots/mev-share-node/metrics"
 	"github.com/flashbots/mev-share-node/simqueue"
 	"go.uber.org/zap"
@@ -31,7 +32,7 @@ type SimQueue struct {
 
 func NewQueue(
 	log *zap.Logger, queue simqueue.Queue, eth EthClient, sim []SimulationBackend, simRes SimulationResult,
-	workersPerNode int, backgroundWg *sync.WaitGroup, cancelCache *RedisCancellationCache,
+	workersPerNode int, backgroundWg *sync.WaitGroup, cancelCache *RedisCancellationCache, replacementCache *redis.ReplacementCache,
 ) *SimQueue {
 	log = log.Named("queue")
 	q := &SimQueue{
@@ -48,6 +49,7 @@ func NewQueue(
 			simulationBackend: sim[i],
 			simRes:            simRes,
 			cancelCache:       cancelCache,
+			replacementCache:  replacementCache,
 			backgroundWg:      backgroundWg,
 		}
 		q.workers = append(q.workers, worker)
@@ -121,6 +123,7 @@ type SimulationWorker struct {
 	simulationBackend SimulationBackend
 	simRes            SimulationResult
 	cancelCache       *RedisCancellationCache
+	replacementCache  *redis.ReplacementCache
 	backgroundWg      *sync.WaitGroup
 }
 
@@ -171,7 +174,43 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 		zap.String("revert", result.Revert.String()),
 		zap.Int("retries", info.Retries),
 	)
+	// mev-share-node knows that new block already arrived, but the node this worker connected to is lagging behind so we should retry
+	if uint64(result.StateBlock) < info.TargetBlock-1 {
+		logger.Warn("Bundle simulated on outdated block, retrying")
+		return simqueue.ErrLaggingBlock
+	}
 
+	var isOldBundle bool
+	rnonce, err := w.replacementCache.GetReplacementNonce(ctx, bundle.Metadata.Signer.String(), bundle.ReplacementUUID)
+	if err != nil {
+		// better send bundle and let builder decide if it is appropriate, don't fail here
+		isOldBundle = true
+		logger.Error("Failed to get replacement nonce", zap.Error(err))
+	}
+	if err == nil && rnonce < bundle.Metadata.ReplacementNonce {
+		isOldBundle = true
+	}
+
+	shouldCancel := bundle.ReplacementUUID != "" && !result.Success
+	if shouldCancel {
+		w.backgroundWg.Add(1)
+		go func() {
+			defer w.backgroundWg.Done()
+			resCtx, cancel := context.WithTimeout(context.Background(), consumeSimulationTimeout)
+			defer cancel()
+			err = w.simRes.SimulatedBundle(resCtx, &bundle, result, info, shouldCancel, isOldBundle)
+			if err != nil {
+				w.log.Error("Failed to consume matched share bundle", zap.Error(err))
+			}
+		}()
+		max := bundle.Inclusion.MaxBlock
+		state := result.StateBlock
+		// If state block is N, that means simulation for target block N+1 was tried
+		if max != 0 && state != 0 && max > state+1 {
+			return simqueue.ErrProcessScheduleNextBlock
+		}
+		return nil
+	}
 	// Try to re-simulate bundle if it failed
 	if !result.Success && isErrorRecoverable(result.Error) {
 		max := bundle.Inclusion.MaxBlock
@@ -181,17 +220,13 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 			return simqueue.ErrProcessScheduleNextBlock
 		}
 	}
-	// mev-share-node knows that new block already arrived, but the node this worker connected to is lagging behind so we should retry
-	if uint64(result.StateBlock) < info.TargetBlock-1 {
-		logger.Warn("Bundle simulated on outdated block, retrying")
-		return simqueue.ErrLaggingBlock
-	}
+
 	w.backgroundWg.Add(1)
 	go func() {
 		defer w.backgroundWg.Done()
 		resCtx, cancel := context.WithTimeout(context.Background(), consumeSimulationTimeout)
 		defer cancel()
-		err = w.simRes.SimulatedBundle(resCtx, &bundle, result, info)
+		err = w.simRes.SimulatedBundle(resCtx, &bundle, result, info, false, isOldBundle)
 		if err != nil {
 			w.log.Error("Failed to consume matched share bundle", zap.Error(err))
 		}

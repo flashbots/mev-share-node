@@ -36,9 +36,41 @@ func NewJSONRPCSimulationBackend(url string) *JSONRPCSimulationBackend {
 	}
 }
 
+func replaceRevertModeForSimulation(bundle *SendMevBundleArgs) *SendMevBundleArgs {
+	newB := &SendMevBundleArgs{
+		Version:         bundle.Version,
+		ReplacementUUID: "",
+		Inclusion:       bundle.Inclusion,
+		Body:            nil,
+		Validity:        bundle.Validity,
+		Privacy:         bundle.Privacy,
+		Metadata:        bundle.Metadata,
+	}
+
+	for _, el := range bundle.Body {
+		var newEl MevBundleBody
+		if el.Tx != nil {
+			if el.RevertMode == "drop" {
+				newEl.CanRevert = true
+				newEl.Tx = el.Tx
+			} else {
+				newEl.CanRevert = el.CanRevert
+				newEl.Tx = el.Tx
+			}
+		}
+		if el.Bundle != nil {
+			newEl.Bundle = replaceRevertModeForSimulation(el.Bundle)
+		}
+		newB.Body = append(newB.Body, newEl)
+	}
+	return newB
+}
+
 func (b *JSONRPCSimulationBackend) SimulateBundle(ctx context.Context, bundle *SendMevBundleArgs, aux *SimMevBundleAuxArgs) (*SimMevBundleResponse, error) {
 	var result SimMevBundleResponse
-	err := b.client.CallFor(ctx, &result, "mev_simBundle", bundle, aux)
+	// we need a hack here until mev_simBundle supports revertMode, we will treat revertMode=drop as canRevert=true so that bundle passes simulation
+	newBundle := replaceRevertModeForSimulation(bundle)
+	err := b.client.CallFor(ctx, &result, "mev_simBundle", newBundle, aux)
 	return &result, err
 }
 
