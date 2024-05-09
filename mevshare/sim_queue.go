@@ -183,14 +183,16 @@ func (w *SimulationWorker) Process(ctx context.Context, data []byte, info simque
 	}
 
 	var isOldBundle bool
-	rnonce, err := w.replacementCache.GetReplacementNonce(ctx, bundle.Metadata.Signer.String(), bundle.ReplacementUUID)
-	if err != nil {
-		// better send bundle and let builder decide if it is appropriate, don't fail here
-		isOldBundle = true
-		logger.Error("Failed to get replacement nonce", zap.Error(err))
-	}
-	if err == nil && rnonce > bundle.Metadata.ReplacementNonce {
-		isOldBundle = true
+	if bundle.ReplacementUUID != "" {
+		rnonce, err := w.replacementCache.GetReplacementNonce(ctx, bundle.Metadata.Signer.String(), bundle.ReplacementUUID)
+		if err != nil {
+			// better send bundle and let builder decide if it is appropriate, don't fail here
+			isOldBundle = false
+			logger.Error("Failed to get replacement nonce", zap.Error(err))
+		}
+		if err == nil && rnonce > bundle.Metadata.ReplacementNonce {
+			isOldBundle = true
+		}
 	}
 
 	shouldCancel := bundle.ReplacementUUID != "" && !result.Success
