@@ -160,9 +160,10 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendM
 			metrics.IncRPCCallFailure(SendBundleEndpointName)
 			return SendMevBundleResponse{}, ErrBackrunNotFound
 		}
-		if privacy := unmatchedBundle.Privacy; privacy == nil && privacy.Hints.HasHint(HintHash) {
+		if privacy := unmatchedBundle.Privacy; privacy == nil || !privacy.Hints.HasHint(HintHash) {
 			// if the unmatched bundle have not configured privacy or has not set the hash hint
 			// then we cannot backrun it
+			logger.Error("unmatched bundle has no hash hint", zap.String("hash", unmatchedHash.Hex()))
 			return SendMevBundleResponse{}, ErrBackrunInvalidBundle
 		}
 		bundle.Body[0].Bundle = unmatchedBundle
