@@ -54,6 +54,7 @@ type BuildersConfig struct {
 	} `yaml:"builders"`
 	OrderflowHeader      bool   `yaml:"orderflowHeader,omitempty"`
 	OrderflowHeaderValue string `yaml:"orderflowHeaderValue,omitempty"`
+	RestrictedAddress    string `yaml:"restrictedAddress"`
 }
 
 // LoadBuilderConfig parses a builder config from a file
@@ -124,8 +125,9 @@ func LoadBuilderConfig(file string) (BuildersBackend, error) {
 	}
 
 	return BuildersBackend{
-		externalBuilders: externalBuilderMap,
-		internalBuilders: internalBuilders,
+		externalBuilders:  externalBuilderMap,
+		internalBuilders:  internalBuilders,
+		RestrictedAddress: config.RestrictedAddress,
 	}, nil
 }
 
@@ -190,8 +192,9 @@ func (b *JSONRPCBuilderBackend) CancelBundleByHash(ctx context.Context, hash com
 }
 
 type BuildersBackend struct {
-	externalBuilders map[string]JSONRPCBuilderBackend
-	internalBuilders []JSONRPCBuilderBackend
+	externalBuilders  map[string]JSONRPCBuilderBackend
+	internalBuilders  []JSONRPCBuilderBackend
+	RestrictedAddress string
 }
 
 // SendBundle sends a bundle to all builders.
@@ -240,6 +243,13 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 	for idx, builder := range b.internalBuilders {
 		// if bundle needs to be replaceable, only send to builders that support replacement
 		if isReplaceable && builder.API != BuilderAPIMevShareBeta1Replacement {
+			internalBuildersSuccess[idx] = true
+			continue
+		}
+		// if address only allows sending to replacement supporting builders we skip
+		if strings.ToLower(iArgs.Metadata.Signer.String()) == strings.ToLower(b.RestrictedAddress) && builder.API != BuilderAPIMevShareBeta1Replacement {
+			logger.Debug("Skipping restricted address", zap.String("restrictedAddress", b.RestrictedAddress))
+			internalBuildersSuccess[idx] = true
 			continue
 		}
 		wg.Add(1)
