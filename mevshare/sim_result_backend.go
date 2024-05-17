@@ -16,7 +16,7 @@ import (
 // SimulationResult is responsible for processing simulation results
 // NOTE: That error should be returned only if simulation should be retried, for example if redis is down or none of the builders responded
 type SimulationResult interface {
-	SimulatedBundle(ctx context.Context, args *SendMevBundleArgs, result *SimMevBundleResponse, info simqueue.QueueItemInfo) error
+	SimulatedBundle(ctx context.Context, args *SendMevBundleArgs, result *SimMevBundleResponse, info simqueue.QueueItemInfo, shouldCancel, isOldBundle bool) error
 }
 
 type Storage interface {
@@ -70,9 +70,7 @@ func izZeroPriorityFeeTX(bundle *SendMevBundleArgs) bool {
 
 // SimulatedBundle is called when simulation is done
 // NOTE: we return error only if we want to retry the simulation
-func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
-	bundle *SendMevBundleArgs, sim *SimMevBundleResponse, _ simqueue.QueueItemInfo,
-) error {
+func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context, bundle *SendMevBundleArgs, sim *SimMevBundleResponse, info simqueue.QueueItemInfo, shouldCancel, isOldBundle bool) error {
 	start := time.Now()
 
 	var hash common.Hash
@@ -121,12 +119,16 @@ func (s *SimulationResultBackend) SimulatedBundle(ctx context.Context,
 		logger.Debug("Bundle has zero priority fee, skipping builder")
 	}
 
-	// failed bundles are not sent to builders, we also don't send single-tx bundles with zero priority fee
-	if sim.Success && !isZeroFee {
+	if isOldBundle {
+		logger.Debug("Bundle is old, skipping builder")
+	}
+	// never send old (already replaced bundles) to builders, if sim failed and it's a bundle with replacementUUID we should force cancel it
+	// we also don't send single-tx bundles with zero priority fee
+	if !isOldBundle && ((sim.Success && !isZeroFee) || (shouldCancel)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.builders.SendBundle(ctx, logger, bundle, uint64(sim.StateBlock)+1)
+			s.builders.SendBundle(ctx, logger, bundle, uint64(sim.StateBlock)+1, shouldCancel)
 		}()
 	}
 

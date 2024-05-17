@@ -25,6 +25,7 @@ type BuilderAPI uint8
 const (
 	BuilderAPIRefundRecipient BuilderAPI = iota
 	BuilderAPIMevShareBeta1
+	BuilderAPIMevShareBeta1Replacement
 
 	OrderflowHeaderName = "x-orderflow-origin"
 )
@@ -35,6 +36,8 @@ func parseBuilderAPI(api string) (BuilderAPI, error) {
 		return BuilderAPIRefundRecipient, nil
 	case "v0.1":
 		return BuilderAPIMevShareBeta1, nil
+	case "v0.1-replacement":
+		return BuilderAPIMevShareBeta1Replacement, nil
 	default:
 		return 0, ErrInvalidBuilder
 	}
@@ -51,6 +54,7 @@ type BuildersConfig struct {
 	} `yaml:"builders"`
 	OrderflowHeader      bool   `yaml:"orderflowHeader,omitempty"`
 	OrderflowHeaderValue string `yaml:"orderflowHeaderValue,omitempty"`
+	RestrictedAddress    string `yaml:"restrictedAddress"`
 }
 
 // LoadBuilderConfig parses a builder config from a file
@@ -121,8 +125,9 @@ func LoadBuilderConfig(file string) (BuildersBackend, error) {
 	}
 
 	return BuildersBackend{
-		externalBuilders: externalBuilderMap,
-		internalBuilders: internalBuilders,
+		externalBuilders:  externalBuilderMap,
+		internalBuilders:  internalBuilders,
+		RestrictedAddress: config.RestrictedAddress,
 	}, nil
 }
 
@@ -163,6 +168,14 @@ func (b *JSONRPCBuilderBackend) SendBundle(ctx context.Context, bundle *SendMevB
 		if res.Error != nil {
 			return res.Error
 		}
+	case BuilderAPIMevShareBeta1Replacement:
+		res, err := b.Client.Call(ctx, "mev_sendBundle", []SendMevBundleArgs{*bundle})
+		if err != nil {
+			return err
+		}
+		if res.Error != nil {
+			return res.Error
+		}
 	}
 	return nil
 }
@@ -179,15 +192,18 @@ func (b *JSONRPCBuilderBackend) CancelBundleByHash(ctx context.Context, hash com
 }
 
 type BuildersBackend struct {
-	externalBuilders map[string]JSONRPCBuilderBackend
-	internalBuilders []JSONRPCBuilderBackend
+	externalBuilders  map[string]JSONRPCBuilderBackend
+	internalBuilders  []JSONRPCBuilderBackend
+	RestrictedAddress string
 }
 
 // SendBundle sends a bundle to all builders.
 // Bundles are sent to all builders in parallel.
-func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bundle *SendMevBundleArgs, targetBlock uint64) { //nolint:gocognit
+func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bundle *SendMevBundleArgs, targetBlock uint64, shouldCancel bool) { //nolint:gocognit
 	var wg sync.WaitGroup
 	isFirstBlock := uint64(bundle.Inclusion.BlockNumber) == targetBlock
+
+	isReplaceable := bundle.ReplacementUUID != ""
 	// clean metadata, privacy, inclusion
 	args := *bundle
 	args.Inclusion.BlockNumber = hexutil.Uint64(targetBlock)
@@ -199,6 +215,7 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 	if signingAddress == (common.Address{}) {
 		logger.Warn("No signing address provided for bundle")
 	}
+	logger = logger.With(zap.Bool("shouldCancel", shouldCancel))
 	var builders []string
 	if args.Privacy != nil {
 		// it should already be cleaned while matching, but just in case we do it again here
@@ -209,18 +226,32 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 
 	// for internal builders send signing_address
 	iArgs := &SendMevBundleArgs{
-		Version:   args.Version,
-		Inclusion: args.Inclusion,
-		Body:      args.Body,
-		Validity:  args.Validity,
-		Privacy:   args.Privacy,
+		Version:         args.Version,
+		Inclusion:       args.Inclusion,
+		Body:            args.Body,
+		Validity:        args.Validity,
+		Privacy:         args.Privacy,
+		ReplacementUUID: bundle.ReplacementUUID,
 		Metadata: &MevBundleMetadata{
-			Signer: signingAddress,
+			Signer:           signingAddress,
+			ReplacementNonce: bundle.Metadata.ReplacementNonce,
+			Cancelled:        shouldCancel,
 		},
 	}
 	// always send to internal builders
 	internalBuildersSuccess := make([]bool, len(b.internalBuilders))
 	for idx, builder := range b.internalBuilders {
+		// if bundle needs to be replaceable, only send to builders that support replacement
+		if isReplaceable && builder.API != BuilderAPIMevShareBeta1Replacement {
+			internalBuildersSuccess[idx] = true
+			continue
+		}
+		// if address only allows sending to replacement supporting builders we skip
+		if strings.ToLower(iArgs.Metadata.Signer.String()) == strings.ToLower(b.RestrictedAddress) && builder.API != BuilderAPIMevShareBeta1Replacement {
+			logger.Debug("Skipping restricted address", zap.String("restrictedAddress", b.RestrictedAddress))
+			internalBuildersSuccess[idx] = true
+			continue
+		}
 		wg.Add(1)
 		go func(builder JSONRPCBuilderBackend, idx int) {
 			defer wg.Done()
@@ -247,6 +278,8 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 	if len(builders) > 0 {
 		buildersUsed := make(map[string]struct{})
 		for _, target := range builders {
+			// if bundle needs to be replaceable, only send to builders that support replacement
+
 			target = strings.ToLower(target)
 
 			if target == "default" || target == "flashbots" {
@@ -258,6 +291,9 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 			}
 			buildersUsed[target] = struct{}{}
 			if builder, ok := b.externalBuilders[target]; ok {
+				if isReplaceable && builder.API != BuilderAPIMevShareBeta1Replacement {
+					continue
+				}
 				wg.Add(1)
 				go func(builder JSONRPCBuilderBackend) {
 					if builder.Delay && isFirstBlock {

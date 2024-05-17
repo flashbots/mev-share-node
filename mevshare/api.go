@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/flashbots/mev-share-node/adapters/redis"
 	"github.com/flashbots/mev-share-node/jsonrpcserver"
 	"github.com/flashbots/mev-share-node/metrics"
 	"github.com/flashbots/mev-share-node/spike"
@@ -59,12 +60,14 @@ type API struct {
 	spikeManager      *spike.Manager[*SendMevBundleArgs]
 	knownBundleCache  *lru.Cache[common.Hash, SendMevBundleArgs]
 	cancellationCache *RedisCancellationCache
+	replacementCache  *redis.ReplacementCache
 }
 
 func NewAPI(
 	log *zap.Logger,
 	scheduler SimScheduler, bundleStorage BundleStorage, eth EthClient, signer types.Signer,
 	simBackends []SimulationBackend, simRateLimit rate.Limit, builders BuildersBackend, cancellationCache *RedisCancellationCache,
+	replacementCache *redis.ReplacementCache,
 	sbundleValidDuration time.Duration,
 ) *API {
 	sm := spike.NewManager(func(ctx context.Context, k string) (*SendMevBundleArgs, error) {
@@ -84,6 +87,7 @@ func NewAPI(
 		spikeManager:      sm,
 		knownBundleCache:  lru.NewCache[common.Hash, SendMevBundleArgs](bundleCacheSize),
 		cancellationCache: cancellationCache,
+		replacementCache:  replacementCache,
 	}
 }
 
@@ -156,9 +160,10 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendM
 			metrics.IncRPCCallFailure(SendBundleEndpointName)
 			return SendMevBundleResponse{}, ErrBackrunNotFound
 		}
-		if privacy := unmatchedBundle.Privacy; privacy == nil && privacy.Hints.HasHint(HintHash) {
+		if privacy := unmatchedBundle.Privacy; privacy == nil || !privacy.Hints.HasHint(HintHash) {
 			// if the unmatched bundle have not configured privacy or has not set the hash hint
 			// then we cannot backrun it
+			logger.Error("unmatched bundle has no hash hint", zap.String("hash", unmatchedHash.Hex()))
 			return SendMevBundleResponse{}, ErrBackrunInvalidBundle
 		}
 		bundle.Body[0].Bundle = unmatchedBundle
@@ -176,6 +181,16 @@ func (m *API) SendBundle(ctx context.Context, bundle SendMevBundleArgs) (_ SendM
 		if err != nil {
 			return SendMevBundleResponse{}, ErrBackrunInclusion
 		}
+	}
+
+	if bundle.ReplacementUUID != "" {
+		// todo: add replacementUUID validation
+		rNonce, err := m.replacementCache.IncReplacementNonce(ctx, signerAddress.String(), bundle.ReplacementUUID)
+		if err != nil {
+			logger.Error("Failed to increment replacement nonce", zap.Error(err))
+			return SendMevBundleResponse{}, ErrInternalServiceError
+		}
+		bundle.Metadata.ReplacementNonce = rNonce
 	}
 
 	metrics.IncSbundlesReceivedValid()

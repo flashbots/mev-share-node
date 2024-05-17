@@ -113,13 +113,26 @@ type TxHint struct {
 	CallData         *hexutil.Bytes  `json:"callData,omitempty"`
 }
 
+const (
+	RevertModeAllow = "allow"
+	RevertModeDrop  = "drop"
+	RevertModeFail  = "fail"
+)
+
 type SendMevBundleArgs struct {
-	Version   string             `json:"version"`
-	Inclusion MevBundleInclusion `json:"inclusion"`
-	Body      []MevBundleBody    `json:"body"`
-	Validity  MevBundleValidity  `json:"validity"`
-	Privacy   *MevBundlePrivacy  `json:"privacy,omitempty"`
-	Metadata  *MevBundleMetadata `json:"metadata,omitempty"`
+	Version         string             `json:"version"`
+	ReplacementUUID string             `json:"replacementUuid,omitempty"`
+	Inclusion       MevBundleInclusion `json:"inclusion"`
+	Body            []MevBundleBody    `json:"body"`
+	Validity        MevBundleValidity  `json:"validity"`
+	Privacy         *MevBundlePrivacy  `json:"privacy,omitempty"`
+	Metadata        *MevBundleMetadata `json:"metadata,omitempty"`
+}
+
+type ReplacementData struct {
+	ReplacementUUID  string `json:"replacementUuid"`
+	ReplacementNonce uint64 `json:"replacementNonce"`
+	Cancelled        bool   `json:"cancelled"`
 }
 
 type MevBundleInclusion struct {
@@ -128,10 +141,11 @@ type MevBundleInclusion struct {
 }
 
 type MevBundleBody struct {
-	Hash      *common.Hash       `json:"hash,omitempty"`
-	Tx        *hexutil.Bytes     `json:"tx,omitempty"`
-	Bundle    *SendMevBundleArgs `json:"bundle,omitempty"`
-	CanRevert bool               `json:"canRevert,omitempty"`
+	Hash       *common.Hash       `json:"hash,omitempty"`
+	Tx         *hexutil.Bytes     `json:"tx,omitempty"`
+	Bundle     *SendMevBundleArgs `json:"bundle,omitempty"`
+	CanRevert  bool               `json:"canRevert,omitempty"`
+	RevertMode string             `json:"revertMode,omitempty"`
 }
 
 type MevBundleValidity struct {
@@ -156,13 +170,15 @@ type MevBundlePrivacy struct {
 }
 
 type MevBundleMetadata struct {
-	BundleHash   common.Hash    `json:"bundleHash,omitempty"`
-	BodyHashes   []common.Hash  `json:"bodyHashes,omitempty"`
-	Signer       common.Address `json:"signer,omitempty"`
-	OriginID     string         `json:"originId,omitempty"`
-	ReceivedAt   hexutil.Uint64 `json:"receivedAt,omitempty"`
-	MatchingHash common.Hash    `json:"matchingHash,omitempty"`
-	Prematched   bool           `json:"prematched"`
+	BundleHash       common.Hash    `json:"bundleHash,omitempty"`
+	BodyHashes       []common.Hash  `json:"bodyHashes,omitempty"`
+	Signer           common.Address `json:"signer,omitempty"`
+	OriginID         string         `json:"originId,omitempty"`
+	ReceivedAt       hexutil.Uint64 `json:"receivedAt,omitempty"`
+	MatchingHash     common.Hash    `json:"matchingHash,omitempty"`
+	Prematched       bool           `json:"prematched"`
+	ReplacementNonce uint64         `json:"replacementNonce,omitempty"`
+	Cancelled        bool           `json:"cancelled"`
 }
 
 type SendMevBundleResponse struct {

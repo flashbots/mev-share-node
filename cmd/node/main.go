@@ -19,6 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/flashbots/go-utils/cli"
+	adredis "github.com/flashbots/mev-share-node/adapters/redis"
 	"github.com/flashbots/mev-share-node/jsonrpcserver"
 	"github.com/flashbots/mev-share-node/mevshare"
 	"github.com/flashbots/mev-share-node/simqueue"
@@ -143,6 +144,7 @@ func main() {
 
 	// keep track of cancelled bundles for a 30-block window
 	cancelCache := mevshare.NewRedisCancellationCache(redisClient, 30*12*time.Second, "node-cancel")
+	rc := adredis.NewReplacementCache(redisClient, 3*time.Hour, "node-replacement")
 
 	var workersPerNode int
 	if _, err := fmt.Sscanf(*workersPerNodePtr, "%d", &workersPerNode); err != nil {
@@ -152,7 +154,7 @@ func main() {
 		logger.Fatal("Workers per node must be greater than 0")
 	}
 	backgroundWg := &sync.WaitGroup{}
-	simQueue := mevshare.NewQueue(logger, redisQueue, ethBackend, simBackends, simResultBackend, workersPerNode, backgroundWg, cancelCache)
+	simQueue := mevshare.NewQueue(logger, redisQueue, ethBackend, simBackends, simResultBackend, workersPerNode, backgroundWg, cancelCache, rc)
 	queueWg := simQueue.Start(ctx)
 	// chain id
 	chainID, err := ethBackend.ChainID(ctx)
@@ -167,8 +169,7 @@ func main() {
 	}
 
 	cachingEthBackend := mevshare.NewCachingEthClient(ethBackend)
-
-	api := mevshare.NewAPI(logger, simQueue, dbBackend, cachingEthBackend, signer, simBackends, rate.Limit(rateLimit), buildersBackend, cancelCache, time.Millisecond*60)
+	api := mevshare.NewAPI(logger, simQueue, dbBackend, cachingEthBackend, signer, simBackends, rate.Limit(rateLimit), buildersBackend, cancelCache, rc, time.Millisecond*60)
 
 	jsonRPCServer, err := jsonrpcserver.NewHandler(jsonrpcserver.Methods{
 		mevshare.SendBundleEndpointName:         api.SendBundle,
