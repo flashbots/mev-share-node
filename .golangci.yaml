@@ -1,5 +1,5 @@
 linters:
-  enable-all: true
+  enable-all: false
   disable:
     - cyclop
     - forbidigo
@@ -16,7 +16,6 @@ linters:
     - nlreturn
     - noctx
     - nonamedreturns
-    - nosnakecase
     - paralleltest
     - revive
     - testpackage
@@ -24,14 +23,8 @@ linters:
     - varnamelen
     - wrapcheck
     - wsl
-    - deadcode
-    - varcheck
-    - exhaustruct
     - nolintlint
-    - depguard
-    - testifylint
-    - perfsprint
-    - gofumpt
+    - tagliatelle
 
     #
     # Disabled because of generics:
@@ -39,18 +32,13 @@ linters:
     - contextcheck
     - rowserrcheck
     - sqlclosecheck
-    - structcheck
     - wastedassign
 
     #
     # Disabled because deprecated:
     #
-    - exhaustivestruct
-    - golint
-    - ifshort
-    - interfacer
-    - maligned
-    - scopelint
+    - exportloopref
+    - execinquery
 
 linters-settings:
   #

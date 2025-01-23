@@ -247,7 +247,7 @@ func (b *BuildersBackend) SendBundle(ctx context.Context, logger *zap.Logger, bu
 			continue
 		}
 		// if address only allows sending to replacement supporting builders we skip
-		if strings.ToLower(iArgs.Metadata.Signer.String()) == strings.ToLower(b.RestrictedAddress) && builder.API != BuilderAPIMevShareBeta1Replacement {
+		if strings.EqualFold(iArgs.Metadata.Signer.String(), b.RestrictedAddress) && builder.API != BuilderAPIMevShareBeta1Replacement {
 			logger.Debug("Skipping restricted address", zap.String("restrictedAddress", b.RestrictedAddress))
 			internalBuildersSuccess[idx] = true
 			continue
