@@ -245,7 +245,6 @@ func (b *DBBackend) InsertBundleForStats(ctx context.Context, bundle *SendMevBun
 			// 1. get bundle from db
 			var storedBundle DBSbundle
 			err = dbTx.GetContext(ctx, &storedBundle, selectSimDataBundleQueryForUpdate, dbBundle.Hash)
-
 			if err != nil {
 				_ = dbTx.Rollback()
 				return known, err
